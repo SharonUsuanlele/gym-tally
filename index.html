@@ -3,57 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#000000">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Gym Tally</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-  :root{--bg:#0f1115;--card:#181b22;--line:#262a33;--text:#f2f3f5;--muted:#8b91a0;--accent:#c6f432;--bad:#ff5d5d;--ok:#4ade80;--warn:#fbbf24}
-  *{box-sizing:border-box}
-  html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-  body{padding:env(safe-area-inset-top) 0 calc(76px + env(safe-area-inset-bottom))}
-  main{max-width:560px;margin:0 auto;padding:18px 16px}
-  h1{font-size:28px;margin:6px 0 4px;letter-spacing:-.02em}
-  h2{font-size:18px;margin:22px 0 10px}
+  :root{--bg:#000;--card:#0b0b0b;--line:#1c1c1c;--line2:#2a2a2a;--text:#f5f5f5;--muted:#7a7a7a;--accent:#fff;--bad:#ff5a5a;--ok:#5ad38c;--warn:#e8b44a}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 "Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  body{padding:env(safe-area-inset-top) 0 calc(72px + env(safe-area-inset-bottom))}
+  main{max-width:520px;margin:0 auto;padding:28px 20px}
+  h1{font-size:30px;font-weight:700;margin:4px 0 6px;letter-spacing:-.03em}
+  h2{font-size:12px;font-weight:600;margin:32px 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em}
   p{margin:6px 0}
-  .muted{color:var(--muted);font-size:14px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0}
-  label{display:block;font-size:14px;color:var(--muted);margin:12px 0 6px}
-  input[type=text],input[type=email],input[type=password]{width:100%;padding:13px 14px;border-radius:12px;border:1px solid var(--line);background:#0b0d11;color:var(--text);font-size:16px}
-  button{font:inherit;border:0;border-radius:12px;padding:13px 16px;cursor:pointer;font-weight:600}
-  .btn{background:var(--accent);color:#111;width:100%;margin-top:14px}
-  .btn.big{padding:20px;font-size:19px;border-radius:16px}
-  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
-  .btn:disabled{opacity:.5}
-  .link{background:none;color:var(--accent);padding:6px 0;font-weight:500}
-  .days{display:flex;gap:6px;flex-wrap:wrap}
-  .day{flex:1;min-width:40px;text-align:center;padding:11px 0;border-radius:10px;border:1px solid var(--line);background:#0b0d11;color:var(--muted);font-weight:600;font-size:14px}
-  .day.on{background:var(--accent);color:#111;border-color:var(--accent)}
+  a{color:var(--text);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line2)}
+  b{font-weight:600}
+  .muted{color:var(--muted);font-size:13px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin:12px 0}
+  .card > b:first-child{display:block;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:6px}
+  label{display:block;font-size:12px;color:var(--muted);margin:16px 0 6px;text-transform:uppercase;letter-spacing:.1em}
+  input[type=text],input[type=email],input[type=password]{width:100%;padding:13px 14px;border-radius:10px;border:1px solid var(--line2);background:#000;color:var(--text);font-size:16px;outline:none}
+  input:focus{border-color:#555}
+  button{font:inherit;border:0;border-radius:10px;padding:13px 16px;cursor:pointer;font-weight:600;transition:opacity .15s,background .15s}
+  button:active{opacity:.7}
+  .btn{background:#fff;color:#000;width:100%;margin-top:14px}
+  .btn.big{padding:18px;font-size:17px;border-radius:12px}
+  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line2);font-weight:500}
+  .btn:disabled{opacity:.4}
+  .link{background:none;color:var(--text);padding:6px 0;font-weight:500;text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line2)}
+  .days{display:flex;gap:5px}
+  .day{flex:1;min-width:0;text-align:center;padding:10px 0;border-radius:8px;border:1px solid var(--line2);background:transparent;color:var(--muted);font-weight:500;font-size:13px}
+  .day.on{background:#fff;color:#000;border-color:#fff;font-weight:600}
   .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
-  .pill{display:inline-block;font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px}
-  .pill.ok{background:rgba(74,222,128,.15);color:var(--ok)}
-  .pill.bad{background:rgba(255,93,93,.15);color:var(--bad)}
-  .pill.wait{background:rgba(251,191,36,.15);color:var(--warn)}
-  .big-num{font-size:34px;font-weight:800;letter-spacing:-.02em}
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px;text-align:center}
-  .stats div{background:#0b0d11;border-radius:10px;padding:8px 2px}
-  .stats b{display:block;font-size:18px}
-  .stats span{font-size:11px;color:var(--muted)}
-  .strip{display:flex;gap:3px;flex-wrap:wrap;margin-top:10px}
-  .strip i{width:14px;height:14px;border-radius:4px;background:#0b0d11;display:inline-block}
-  .strip i.h{background:var(--ok)} .strip i.m{background:var(--bad)} .strip i.p{background:var(--warn)} .strip i.x{background:#2a2f3a}
-  .lead{border-color:var(--accent)}
-  nav{position:fixed;left:0;right:0;bottom:0;background:rgba(15,17,21,.96);border-top:1px solid var(--line);display:flex;padding:6px 6px calc(6px + env(safe-area-inset-bottom));backdrop-filter:blur(8px)}
-  nav button{flex:1;background:none;color:var(--muted);padding:10px 0;font-size:13px}
-  nav button.on{color:var(--accent)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:0}
+  .pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+  .pill.ok{color:var(--ok)} .pill.bad{color:var(--bad)} .pill.wait{color:var(--warn)}
+  .big-num{font-size:32px;font-weight:700;letter-spacing:-.03em;margin:8px 0 2px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:14px;text-align:left;border-top:1px solid var(--line)}
+  .stats div{padding:12px 0 2px}
+  .stats b{display:block;font-size:20px;font-weight:600;letter-spacing:-.02em}
+  .stats span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+  .strip{display:flex;gap:3px;flex-wrap:wrap;margin-top:14px}
+  .strip i{width:12px;height:12px;border-radius:3px;background:#161616;display:inline-block}
+  .strip i.h{background:#fff} .strip i.m{background:var(--bad)} .strip i.p{background:transparent;box-shadow:inset 0 0 0 1.5px var(--warn)}
+  .lead{border-color:#fff}
+  nav{position:fixed;left:0;right:0;bottom:0;background:rgba(0,0,0,.92);border-top:1px solid var(--line);display:flex;padding:4px 8px calc(4px + env(safe-area-inset-bottom));backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  nav button{flex:1;background:none;color:var(--muted);padding:14px 0;font-size:12px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;border-radius:0;position:relative}
+  nav button.on{color:#fff}
+  nav button.on::after{content:"";position:absolute;left:50%;bottom:6px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:#fff}
   .cam{position:fixed;inset:0;background:#000;z-index:20;display:flex;flex-direction:column}
   .cam video,.cam img{flex:1;width:100%;object-fit:cover;min-height:0}
-  .cam .bar{display:flex;gap:10px;padding:14px 14px calc(14px + env(safe-area-inset-bottom));background:#000}
-  .cam .bar button{flex:1}
-  .shutter{background:#fff;color:#111}
-  .feed img{width:100%;border-radius:12px;display:block;margin-top:10px;aspect-ratio:3/4;object-fit:cover;background:#0b0d11}
-  .toast{position:fixed;left:16px;right:16px;bottom:90px;max-width:528px;margin:0 auto;background:#fff;color:#111;padding:13px 16px;border-radius:12px;font-weight:600;z-index:30;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+  .cam .bar{display:flex;gap:10px;padding:14px 16px calc(14px + env(safe-area-inset-bottom));background:#000}
+  .cam .bar button{flex:1;margin:0}
+  .shutter{background:#fff;color:#000}
+  .feed img{width:100%;border-radius:10px;display:block;margin-top:12px;aspect-ratio:3/4;object-fit:cover;background:#111}
+  .toast{position:fixed;left:20px;right:20px;bottom:84px;max-width:480px;margin:0 auto;background:#fff;color:#000;padding:13px 16px;border-radius:10px;font-weight:500;font-size:14px;z-index:30}
   .hidden{display:none!important}
   .center{text-align:center}
 </style>
@@ -169,9 +174,9 @@ const prettyDate = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB",
 function seasonBanner(today) {
   if (today < SEASON_START) {
     const n = Math.round((new Date(SEASON_START + "T12:00:00Z") - new Date(today + "T12:00:00Z")) / 864e5);
-    return `<div class="card lead"><b>🏁 Season starts ${prettyDate(SEASON_START)}</b><p class="muted">${n} day${n === 1 ? "" : "s"} to go. Runs until ${prettyDate(SEASON_END)}. Practice check ins before then don't count, so use them to test the app.</p></div>`;
+    return `<div class="card"><b>Season starts</b><p class="big-num">${n} day${n === 1 ? "" : "s"}</p><p class="muted">${prettyDate(SEASON_START)}. Runs until ${prettyDate(SEASON_END)}. Practice check ins before then don't count, so use them to test the app.</p></div>`;
   }
-  if (today > SEASON_END) return `<div class="card lead"><b>🏆 Season finished</b><p class="muted">It ran ${prettyDate(SEASON_START)} to ${prettyDate(SEASON_END)}. See the Board for final results.</p></div>`;
+  if (today > SEASON_END) return `<div class="card"><b>Season finished</b><p class="muted">It ran ${prettyDate(SEASON_START)} to ${prettyDate(SEASON_END)}. See the Board for final results.</p></div>`;
   return "";
 }
 const fmtTime = (iso) => new Date(iso).toLocaleString("en-GB", { timeZone:"Europe/London", weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" });
@@ -223,7 +228,7 @@ async function refresh() {
 function renderAuth(mode = "login") {
   const signup = mode === "signup";
   $app.innerHTML = `
-    <h1>Gym Tally 🏋️</h1>
+    <h1>Gym Tally</h1>
     <p class="muted">Private to the group. ${signup ? "Create your account with the email you gave the group admin." : "Log in to check in."}</p>
     <div class="card">
       <label>Email</label><input id="em" type="email" autocomplete="email" inputmode="email">
@@ -273,7 +278,7 @@ function renderSetup() {
       <label>Your name</label><input id="nm" type="text" maxlength="30">
       <label>Your default gym days (minimum ${MIN_DAYS} a week)</label>${daysPicker(sel)}
       <p class="muted">Used for any week you don't plan separately.</p>
-      <p class="muted">📍 You'll pin your gym from the Me tab the first time you're there.</p>
+      <p class="muted">You'll pin your gym from the Me tab the first time you're there.</p>
       <button class="btn" id="save">Save and start</button>
     </div>`;
   wireDays(sel);
@@ -313,11 +318,11 @@ function renderToday() {
     <h1>Hi ${esc(me.name)}</h1>
     ${seasonBanner(today)}
     <div class="card">
-      ${done ? `<span class="pill ok">CHECKED IN</span><p class="big-num">Done today ✅</p>`
-        : isDay ? `<span class="pill wait">GYM DAY</span><p class="big-num">Get it done 💪</p><p class="muted">${today < SEASON_START || today > SEASON_END ? "Outside the season, so this doesn't count." : `Check in by 11:59pm or it's a ${money(FINE)} miss.`}</p>`
-        : `<span class="pill ok">REST DAY</span><p class="big-num">Rest up</p><p class="muted">Extra sessions still count towards your total.</p>`}
-      ${!me.gym_lat ? `<p class="muted" style="color:var(--warn)">⚠️ Pin your gym first (do it while you're there), or check ins won't count.</p><button class="btn ghost" id="pin">📍 Pin my gym</button>` : ""}
-      ${done ? "" : `<button class="btn big" id="ci">📸 Check in</button>`}
+      ${done ? `<span class="pill ok">CHECKED IN</span><p class="big-num">Done today</p>`
+        : isDay ? `<span class="pill wait">GYM DAY</span><p class="big-num">Get it done</p><p class="muted">${today < SEASON_START || today > SEASON_END ? "Outside the season, so this doesn't count." : `Check in by 11:59pm or it's a ${money(FINE)} miss.`}</p>`
+        : `<span class="pill">Rest day</span><p class="big-num">Rest up</p><p class="muted">Extra sessions still count towards your total.</p>`}
+      ${!me.gym_lat ? `<p class="muted" style="color:var(--warn)">Pin your gym first (do it while you're there), or check ins won't count.</p><button class="btn ghost" id="pin">Pin my gym</button>` : ""}
+      ${done ? "" : `<button class="btn big" id="ci">Check in</button>`}
       ${mine.filter(c => !counts(c)).length ? `<p class="muted">You have ${mine.filter(c => !counts(c)).length} check in(s) today that didn't count. See the Feed for why.</p>` : ""}
     </div>
     ${myRow ? `<div class="card"><div class="row"><b>${monthLabel(season.current.key)}</b><span class="muted">${fixed}</span></div>
@@ -350,16 +355,16 @@ function renderBoard() {
         ${(() => { const pr = S.profiles.find(p => p.id === r.id);
           const recent = pr.gym_set_at && (Date.now() - new Date(pr.gym_set_at)) < 7 * 864e5 && pr.gym_set_at > pr.created_at && (Date.now() - new Date(pr.created_at)) > 864e5;
           return `<p class="muted">This week: ${dayList(daysFor(pr, today, S.plans))}</p>
-          <p class="muted">${pr.gym_lat ? `${esc(pr.gym_name || "Gym")} · <a href="https://www.google.com/maps/search/?api=1&query=${pr.gym_lat},${pr.gym_lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a>` : "No gym set"}${recent ? ` <span class="pill wait">gym changed ${fmtTime(pr.gym_set_at)}</span>` : ""}</p>`; })()}
+          <p class="muted">${pr.gym_lat ? `${esc(pr.gym_name || "Gym")} · <a href="https://www.google.com/maps/search/?api=1&query=${pr.gym_lat},${pr.gym_lng}" target="_blank" rel="noopener">Map</a>` : "No gym set"}${recent ? ` <span class="pill wait">gym changed ${fmtTime(pr.gym_set_at)}</span>` : ""}</p>`; })()}
         <div class="stats"><div><b>${r.hits}/${r.committed}</b><span>hit</span></div><div><b>${r.misses}</b><span>misses</span></div><div><b>${r.sessions}</b><span>sessions</span></div><div><b>${money(r.totalOwed)}</b><span>owes${r.carried ? "*" : ""}</span></div></div>
         <div class="strip">${r.days.map(x => `<i class="${x.s}"></i>`).join("")}</div>
       </div>`).join("")}
     ${current.rows.some(r => r.carried) ? `<p class="muted">* includes fines carried from a rolled over month</p>` : ""}
-    <p class="muted">🟩 done &nbsp; 🟥 missed &nbsp; 🟨 due today</p>
+    <p class="muted"><span class="strip" style="display:inline-flex;margin:0 4px 0 0;vertical-align:-2px"><i class="h"></i></span>done &nbsp; <span class="strip" style="display:inline-flex;margin:0 4px 0 0;vertical-align:-2px"><i class="m"></i></span>missed &nbsp; <span class="strip" style="display:inline-flex;margin:0 4px 0 0;vertical-align:-2px"><i class="p"></i></span>due today</p>
     ${past.length ? `<h2>Past months</h2>${past.map(m => `
       <div class="card"><div class="row"><b>${monthLabel(m.key)}</b><span>${money(m.pot)}</span></div>
       ${m.rolledOver ? `<p class="muted">Tie, so the pot rolled over.</p>` :
-        `<p>🏆 <b>${esc(m.winner.name)}</b> won</p>${m.payments.length ? m.payments.map(x => `<p class="muted">${esc(x.from)} pays ${esc(x.to)} ${money(x.amount)}</p>`).join("") : `<p class="muted">Nobody owes anything.</p>`}`}
+        `<p><b>${esc(m.winner.name)}</b> won</p>${m.payments.length ? m.payments.map(x => `<p class="muted">${esc(x.from)} pays ${esc(x.to)} ${money(x.amount)}</p>`).join("") : `<p class="muted">Nobody owes anything.</p>`}`}
       </div>`).join("")}` : ""}`;
 }
 
@@ -380,12 +385,12 @@ async function renderFeed() {
       ${c.review === "rejected" ? `<span class="pill bad">REJECTED BY ADMIN</span>` : c.review === "approved" ? `<span class="pill ok">APPROVED BY ADMIN</span>`
         : c.valid ? `<span class="pill ok">COUNTED</span>` : `<span class="pill bad">DIDN'T COUNT</span>`}</div>
       ${c.review_note ? `<p class="muted">Admin note: ${esc(c.review_note)}</p>` : ""}
-      <p class="muted">${fmtTime(c.created_at)} · ${c.distance_m != null ? `${c.distance_m}m from their gym` : "no gym pinned yet"} · <a href="https://www.google.com/maps/search/?api=1&query=${c.lat},${c.lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></p>
+      <p class="muted">${fmtTime(c.created_at)} · ${c.distance_m != null ? `${c.distance_m}m from their gym` : "no gym pinned yet"} · <a href="https://www.google.com/maps/search/?api=1&query=${c.lat},${c.lng}" target="_blank" rel="noopener">Map</a></p>
       <img data-p="${esc(c.photo_path)}" alt="">
       ${S.admin ? `<div class="row" style="margin-top:10px">
-        ${c.review !== "rejected" && counts(c) ? `<button class="btn ghost rv" data-id="${c.id}" data-r="rejected" style="margin:0;padding:10px">❌ Reject (missed day)</button>` : ""}
-        ${!counts(c) && c.review !== "approved" && c.review !== "rejected" ? `<button class="btn ghost rv" data-id="${c.id}" data-r="approved" style="margin:0;padding:10px">✅ Approve anyway</button>` : ""}
-        ${c.review ? `<button class="btn ghost rv" data-id="${c.id}" data-r="" style="margin:0;padding:10px">↩️ Undo admin decision</button>` : ""}
+        ${c.review !== "rejected" && counts(c) ? `<button class="btn ghost rv" data-id="${c.id}" data-r="rejected" style="margin:0;padding:10px">Reject as missed</button>` : ""}
+        ${!counts(c) && c.review !== "approved" && c.review !== "rejected" ? `<button class="btn ghost rv" data-id="${c.id}" data-r="approved" style="margin:0;padding:10px">Approve anyway</button>` : ""}
+        ${c.review ? `<button class="btn ghost rv" data-id="${c.id}" data-r="" style="margin:0;padding:10px">Undo</button>` : ""}
       </div>` : ""}
     </div>`).join("")}</div>`;
   document.querySelectorAll(".rv").forEach(b => b.onclick = async () => {
@@ -421,13 +426,13 @@ function renderMe() {
     <div class="card"><b>Default days</b><p class="muted">Used for any week you haven't planned. Changing these applies from next week; past weeks stay as they were.</p>
       <div id="defdays">${daysPicker(sel)}</div><button class="btn ghost" id="sd">Save default days</button></div>
     <div class="card" id="mygym"><b>My gym</b>
-      ${me.gym_lat ? `<p class="muted">${esc(me.gym_name || "My gym")} · pinned ${fmtTime(me.gym_set_at)} · <a href="${mapUrl(me)}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></p>
+      ${me.gym_lat ? `<p class="muted">${esc(me.gym_name || "My gym")} · pinned ${fmtTime(me.gym_set_at)} · <a href="${mapUrl(me)}" target="_blank" rel="noopener">Map</a></p>
         ${me.gym_photo ? `<div class="feed"><img data-p="${esc(me.gym_photo)}" alt=""></div>` : ""}` : `<p class="muted">Not pinned yet.</p>`}
       <label>Gym name</label><input id="gn" type="text" maxlength="40" value="${esc(me.gym_name || "")}" placeholder="e.g. PureGym Preston">
       <p class="muted">Stand inside your gym, tap below, and take a photo of the gym. Your pin and photo are shown to everyone.</p>
-      <button class="btn" id="pingym">📍 I'm at my gym: pin it with a photo</button></div>
+      <button class="btn" id="pingym">I'm at my gym: pin it with a photo</button></div>
     ${others.length ? `<div class="card"><b>Everyone's gym</b><p class="muted">Tap a map to check each pin is really a gym.</p>${others.map(p => `
-      <div style="margin-top:14px"><b>${esc(p.name)}</b> <span class="muted">· ${esc(p.gym_name || "gym")} · pinned ${fmtTime(p.gym_set_at)} · <a href="${mapUrl(p)}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></span>
+      <div style="margin-top:14px"><b>${esc(p.name)}</b> <span class="muted">· ${esc(p.gym_name || "gym")} · pinned ${fmtTime(p.gym_set_at)} · <a href="${mapUrl(p)}" target="_blank" rel="noopener">Map</a></span>
       ${p.gym_photo ? `<div class="feed"><img data-p="${esc(p.gym_photo)}" alt=""></div>` : ""}</div>`).join("")}</div>` : ""}
     <button class="btn ghost" id="out">Log out</button>`;
   document.querySelectorAll("#defdays .day").forEach(b => b.onclick = () => {
