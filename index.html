@@ -263,32 +263,53 @@ function wireDays(sel) {
 const dayList = (arr) => DAY_ORDER.filter(d => arr.includes(d)).map(d => DAY_NAMES[d]).join(", ");
 const weekLabel = (ws) => new Date(ws + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short", timeZone:"UTC" });
 
-/* Gym picker: search by name or postcode (OpenStreetMap), or use current location. Calls onPick({lat,lng,name,method}). */
+/* Gym picker. Only real gyms (OpenStreetMap) can be chosen, so nobody can pin their house. */
+const GYM_TAGS = (c, t) => (c === "leisure" && ["fitness_centre","sports_centre","sports_hall"].includes(t)) || (c === "amenity" && t === "gym");
+async function gymsNear(lat, lng, radius) {
+  const q = `[out:json][timeout:20];(nwr(around:${radius},${lat},${lng})["leisure"~"^(fitness_centre|sports_centre|sports_hall)$"];nwr(around:${radius},${lat},${lng})["amenity"="gym"];);out center 40;`;
+  const r = await fetch("https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q));
+  if (!r.ok) throw new Error("Gym lookup is busy. Try again in a minute.");
+  const j = await r.json();
+  const toRad = (x) => x * Math.PI / 180;
+  const dist = (a, b, c, d) => 2 * 6371000 * Math.asin(Math.sqrt(Math.sin(toRad(c - a) / 2) ** 2 + Math.cos(toRad(a)) * Math.cos(toRad(c)) * Math.sin(toRad(d - b) / 2) ** 2));
+  return j.elements.map(e => {
+    const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon, t = e.tags || {};
+    const addr = [t["addr:street"], t["addr:city"] || t["addr:town"], t["addr:postcode"]].filter(Boolean).join(", ");
+    return { lat: la, lng: lo, name: t.name || t.brand || "Unnamed gym", addr, d: dist(lat, lng, la, lo) };
+  }).filter(g => g.lat != null).sort((a, b) => a.d - b.d);
+}
 function gymPickerHTML() {
   return `<div class="gp">
-    <label>Search your gym (name and town, or postcode)</label>
-    <div class="row"><input type="text" class="gp-q" placeholder="e.g. PureGym Preston"><button type="button" class="gp-s" style="background:var(--accent);color:#111">Search</button></div>
+    <label>Find your gym (gym name and town, or a postcode)</label>
+    <div class="row"><input type="text" class="gp-q" placeholder="e.g. PureGym Preston or PR1 2AB"><button type="button" class="gp-s" style="background:var(--accent);color:#111">Search</button></div>
     <div class="gp-res"></div>
-    <button type="button" class="btn ghost gp-here">📍 Or: I'm at my gym, use where I am</button>
-    <p class="muted gp-msg"></p></div>`;
+    <button type="button" class="btn ghost gp-here">📍 Or: I'm at my gym, find it from here</button>
+    <p class="muted gp-msg">Only real gyms can be picked.</p></div>`;
 }
 function wireGymPicker(root, onPick) {
   const q = root.querySelector(".gp-q"), res = root.querySelector(".gp-res"), msg = root.querySelector(".gp-msg");
+  const show = (list, note) => {
+    if (!list.length) { res.innerHTML = `<p class="muted">${note || "No gyms found. Try the gym name plus the town, or a postcode."}</p>`; return; }
+    res.innerHTML = (note ? `<p class="muted">${note}</p>` : "") + list.slice(0, 8).map((g, i) =>
+      `<button type="button" class="btn ghost gp-r" data-i="${i}" style="text-align:left;font-weight:500;margin-top:8px"><b>${esc(g.name)}</b><br><span class="muted">${esc(g.addr || "")}${g.d != null ? ` · ${g.d < 1000 ? Math.round(g.d) + "m" : (g.d / 1000).toFixed(1) + "km"} away` : ""}</span></button>`).join("");
+    res.querySelectorAll(".gp-r").forEach(b => b.onclick = () => {
+      const g = list[+b.dataset.i]; res.innerHTML = ""; msg.textContent = `✅ ${g.name}${g.addr ? ", " + g.addr : ""}`;
+      onPick({ lat: g.lat, lng: g.lng, name: g.name, method: g.method || "search" });
+    });
+  };
   const search = async () => {
     const term = q.value.trim(); if (term.length < 3) return toast("Type a gym name or postcode.");
     res.innerHTML = `<p class="muted">Searching…</p>`;
     try {
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=gb&limit=6&q=${encodeURIComponent(term)}`, { headers: { "Accept-Language": "en-GB" } });
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=gb&limit=10&q=${encodeURIComponent(term)}`, { headers: { "Accept-Language": "en-GB" } });
       const list = await r.json();
-      if (!list.length) { res.innerHTML = `<p class="muted">Nothing found. Try the gym name plus the town, or the postcode.</p>`; return; }
-      res.innerHTML = list.map((x, i) => `<button type="button" class="btn ghost gp-r" data-i="${i}" style="text-align:left;font-weight:500;margin-top:8px">${esc(x.display_name)}</button>`).join("");
-      res.querySelectorAll(".gp-r").forEach(b => b.onclick = () => {
-        const x = list[+b.dataset.i];
-        res.innerHTML = "";
-        msg.textContent = `✅ ${x.display_name.split(",").slice(0, 3).join(",")}`;
-        onPick({ lat: +x.lat, lng: +x.lon, name: x.name || x.display_name.split(",")[0], method: "search" });
-      });
-    } catch { res.innerHTML = `<p class="muted">Search failed. Check your connection and try again.</p>`; }
+      const gyms = list.filter(x => GYM_TAGS(x.category, x.type)).map(x => ({ lat: +x.lat, lng: +x.lon, name: x.name || x.display_name.split(",")[0], addr: x.display_name.split(",").slice(1, 4).join(",").trim() }));
+      if (gyms.length) return show(gyms);
+      if (!list.length) return show([]);
+      res.innerHTML = `<p class="muted">Looking for gyms near ${esc(list[0].display_name.split(",")[0])}…</p>`;
+      const near = await gymsNear(+list[0].lat, +list[0].lon, 2500);
+      show(near, near.length ? `Gyms near ${esc(list[0].display_name.split(",")[0])}:` : "No gyms found nearby. Try your gym's name and town.");
+    } catch (e) { res.innerHTML = `<p class="muted">${esc(e.message || "Search failed. Check your connection and try again.")}</p>`; }
   };
   root.querySelector(".gp-s").onclick = search;
   q.onkeydown = (e) => { if (e.key === "Enter") search(); };
@@ -297,8 +318,11 @@ function wireGymPicker(root, onPick) {
     try {
       const p = await getPosition();
       if (p.coords.accuracy > 100) throw new Error(`Location is too rough (±${Math.round(p.coords.accuracy)}m). Go near a window and try again.`);
-      msg.textContent = `✅ Using where you are now (±${Math.round(p.coords.accuracy)}m)`;
-      onPick({ lat: p.coords.latitude, lng: p.coords.longitude, name: null, method: "here" });
+      msg.textContent = "Looking for your gym…";
+      const near = (await gymsNear(p.coords.latitude, p.coords.longitude, 150 + Math.min(p.coords.accuracy, 100)));
+      if (!near.length) throw new Error("There's no gym on the map where you're standing, so this can't be saved. Search for your gym by name instead.");
+      msg.textContent = "Which one are you in?";
+      show(near.map(g => ({ ...g, lat: p.coords.latitude, lng: p.coords.longitude, method: "here" })));
     } catch (err) { msg.textContent = err.message; }
     e.target.disabled = false;
   };
@@ -388,7 +412,10 @@ function renderBoard() {
     ${current.rows.map((r, i) => `
       <div class="card ${leader && leader.id === r.id ? "lead" : ""}">
         <div class="row"><b>${i + 1}. ${esc(r.name)}</b>${r.pending ? `<span class="pill wait">due today</span>` : ""}</div>
-        <p class="muted">This week: ${dayList(daysFor(S.profiles.find(p => p.id === r.id), today, S.plans))}</p>
+        ${(() => { const pr = S.profiles.find(p => p.id === r.id);
+          const recent = pr.gym_set_at && (Date.now() - new Date(pr.gym_set_at)) < 7 * 864e5 && pr.gym_set_at > pr.created_at && (Date.now() - new Date(pr.created_at)) > 864e5;
+          return `<p class="muted">This week: ${dayList(daysFor(pr, today, S.plans))}</p>
+          <p class="muted">${pr.gym_lat ? `${esc(pr.gym_name || "Gym")} · <a href="https://www.openstreetmap.org/?mlat=${pr.gym_lat}&mlon=${pr.gym_lng}#map=18/${pr.gym_lat}/${pr.gym_lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a>` : "No gym set"}${recent ? ` <span class="pill wait">gym changed ${fmtTime(pr.gym_set_at)}</span>` : ""}</p>`; })()}
         <div class="stats"><div><b>${r.hits}/${r.committed}</b><span>hit</span></div><div><b>${r.misses}</b><span>misses</span></div><div><b>${r.sessions}</b><span>sessions</span></div><div><b>${money(r.totalOwed)}</b><span>owes${r.carried ? "*" : ""}</span></div></div>
         <div class="strip">${r.days.map(x => `<i class="${x.s}"></i>`).join("")}</div>
       </div>`).join("")}
