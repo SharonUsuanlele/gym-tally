@@ -85,9 +85,11 @@ const monthKey = (s) => s.slice(0,7);
 const monthStart = (k) => k + "-01";
 const monthEnd = (k) => { const [y,m] = k.split("-").map(Number); return new Date(Date.UTC(y, m, 0, 12)).toISOString().slice(0,10); };
 const nextMonth = (k) => { const [y,m] = k.split("-").map(Number); return m === 12 ? `${y+1}-01` : `${y}-${String(m+1).padStart(2,"0")}`; };
+const weekStart = (s) => addDays(s, -((dow(s) + 6) % 7));
+const daysFor = (p, d, plans) => (plans && plans[p.id + "|" + weekStart(d)]) || p.days;
 const monthLabel = (k) => new Date(k + "-15T12:00:00Z").toLocaleDateString("en-GB", { month:"long", year:"numeric", timeZone:"UTC" });
 
-function scoreMonth(profiles, checkins, key, today) {
+function scoreMonth(profiles, checkins, key, today, plans) {
   const valid = new Set(checkins.filter(c => c.valid).map(c => c.user_id + "|" + c.local_date));
   const rows = profiles.map(p => {
     const from = p.start_date > monthStart(key) ? p.start_date : monthStart(key);
@@ -95,7 +97,7 @@ function scoreMonth(profiles, checkins, key, today) {
     const days = []; let hits = 0, misses = 0, pending = 0;
     for (let d = monthStart(key); d <= monthEnd(key); d = addDays(d, 1)) {
       let s = "x";
-      if (d >= from && d <= to && p.days.includes(dow(d))) {
+      if (d >= from && d <= to && daysFor(p, d, plans).includes(dow(d))) {
         if (valid.has(p.id + "|" + d)) { s = "h"; hits++; }
         else if (d < today) { s = "m"; misses++; }
         else { s = "p"; pending++; }
@@ -107,7 +109,7 @@ function scoreMonth(profiles, checkins, key, today) {
     const committed = hits + misses;
     return { id: p.id, name: p.name, hits, misses, pending, committed, sessions, owed: misses * FINE,
              rate: committed ? hits / committed : 1, days };
-  }).filter(r => r.committed + r.pending + r.sessions > 0 || profiles.find(p => p.id === r.id).start_date <= monthEnd(key));
+  });
   return rows;
 }
 
@@ -120,7 +122,7 @@ function pickWinner(rows) {
 }
 
 /* Runs every month from the first start date to the current one, carrying unpaid fines through rollovers. */
-function computeSeason(profiles, checkins, today) {
+function computeSeason(profiles, checkins, today, plans) {
   if (!profiles.length) return { months: [], current: null };
   const first = profiles.map(p => p.start_date).sort()[0];
   const nowKey = monthKey(today);
@@ -128,7 +130,7 @@ function computeSeason(profiles, checkins, today) {
   const months = [];
   for (let k = monthKey(first); k <= nowKey; k = nextMonth(k)) {
     const active = profiles.filter(p => p.start_date <= monthEnd(k));
-    const rows = scoreMonth(active, checkins, k, today)
+    const rows = scoreMonth(active, checkins, k, today, plans)
       .sort((a, b) => a.misses - b.misses || b.sessions - a.sessions || a.name.localeCompare(b.name));
     rows.forEach(r => { r.carried = carry[r.id] || 0; r.totalOwed = r.carried + r.owed; });
     const pot = rows.reduce((s, r) => s + r.totalOwed, 0);
@@ -154,7 +156,7 @@ function computeSeason(profiles, checkins, today) {
 const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
-const S = { user: null, member: false, profiles: [], checkins: [], me: null, tab: "today", urls: {} };
+const S = { user: null, member: false, profiles: [], checkins: [], plans: {}, me: null, tab: "today", urls: {} };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const money = (n) => "£" + n.toFixed(n % 1 ? 2 : 0);
@@ -192,12 +194,14 @@ async function load() {
 }
 
 async function refresh() {
-  const [p, c] = await Promise.all([
+  const [p, w, c] = await Promise.all([
     sb.from("profiles").select("*"),
+    sb.from("week_plans").select("user_id,week_start,days"),
     sb.from("checkins").select("id,user_id,created_at,local_date,distance_m,valid,photo_path").order("created_at", { ascending: false }).limit(2000)
   ]);
   S.profiles = p.data || [];
   S.checkins = c.data || [];
+  S.plans = Object.fromEntries((w.data || []).map(x => [x.user_id + "|" + x.week_start, x.days]));
   S.me = S.profiles.find(x => x.id === S.user.id) || null;
 }
 
@@ -244,36 +248,71 @@ function wireDays(sel) {
   });
 }
 
+const dayList = (arr) => DAY_ORDER.filter(d => arr.includes(d)).map(d => DAY_NAMES[d]).join(", ");
+const weekLabel = (ws) => new Date(ws + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short", timeZone:"UTC" });
+
+/* Gym picker: search by name or postcode (OpenStreetMap), or use current location. Calls onPick({lat,lng,name,method}). */
+function gymPickerHTML() {
+  return `<div class="gp">
+    <label>Search your gym (name and town, or postcode)</label>
+    <div class="row"><input type="text" class="gp-q" placeholder="e.g. PureGym Preston"><button type="button" class="gp-s" style="background:var(--accent);color:#111">Search</button></div>
+    <div class="gp-res"></div>
+    <button type="button" class="btn ghost gp-here">📍 Or: I'm at my gym, use where I am</button>
+    <p class="muted gp-msg"></p></div>`;
+}
+function wireGymPicker(root, onPick) {
+  const q = root.querySelector(".gp-q"), res = root.querySelector(".gp-res"), msg = root.querySelector(".gp-msg");
+  const search = async () => {
+    const term = q.value.trim(); if (term.length < 3) return toast("Type a gym name or postcode.");
+    res.innerHTML = `<p class="muted">Searching…</p>`;
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=gb&limit=6&q=${encodeURIComponent(term)}`, { headers: { "Accept-Language": "en-GB" } });
+      const list = await r.json();
+      if (!list.length) { res.innerHTML = `<p class="muted">Nothing found. Try the gym name plus the town, or the postcode.</p>`; return; }
+      res.innerHTML = list.map((x, i) => `<button type="button" class="btn ghost gp-r" data-i="${i}" style="text-align:left;font-weight:500;margin-top:8px">${esc(x.display_name)}</button>`).join("");
+      res.querySelectorAll(".gp-r").forEach(b => b.onclick = () => {
+        const x = list[+b.dataset.i];
+        res.innerHTML = "";
+        msg.textContent = `✅ ${x.display_name.split(",").slice(0, 3).join(",")}`;
+        onPick({ lat: +x.lat, lng: +x.lon, name: x.name || x.display_name.split(",")[0], method: "search" });
+      });
+    } catch { res.innerHTML = `<p class="muted">Search failed. Check your connection and try again.</p>`; }
+  };
+  root.querySelector(".gp-s").onclick = search;
+  q.onkeydown = (e) => { if (e.key === "Enter") search(); };
+  root.querySelector(".gp-here").onclick = async (e) => {
+    e.target.disabled = true; msg.textContent = "Getting your location…";
+    try {
+      const p = await getPosition();
+      if (p.coords.accuracy > 100) throw new Error(`Location is too rough (±${Math.round(p.coords.accuracy)}m). Go near a window and try again.`);
+      msg.textContent = `✅ Using where you are now (±${Math.round(p.coords.accuracy)}m)`;
+      onPick({ lat: p.coords.latitude, lng: p.coords.longitude, name: null, method: "here" });
+    } catch (err) { msg.textContent = err.message; }
+    e.target.disabled = false;
+  };
+}
+
 function renderSetup() {
   const sel = []; let gym = null;
   $app.innerHTML = `
-    <h1>Set up</h1><p class="muted">Do this once. Set your gym while you're standing in it.</p>
+    <h1>Set up</h1><p class="muted">Do this once. You can plan different days for each week later.</p>
     <div class="card">
       <label>Your name</label><input id="nm" type="text" maxlength="30">
-      <label>Your fixed gym days (minimum ${MIN_DAYS})</label>${daysPicker(sel)}
+      <label>Your default gym days (minimum ${MIN_DAYS} a week)</label>${daysPicker(sel)}
+      <p class="muted">Used for any week you don't plan separately.</p>
       <label>Gym name</label><input id="gn" type="text" maxlength="40" placeholder="e.g. PureGym Preston">
-      <button class="btn ghost" id="loc">📍 I'm at my gym, save this location</button>
-      <p class="muted" id="locmsg">Not set yet. You can skip this and set it later from Me, but check ins won't count until it's set.</p>
+      <div id="gpk">${gymPickerHTML()}</div>
       <button class="btn" id="save">Save and start</button>
     </div>`;
   wireDays(sel);
-  document.getElementById("loc").onclick = async (e) => {
-    e.target.disabled = true; document.getElementById("locmsg").textContent = "Getting your location…";
-    try {
-      const p = await getPosition();
-      if (p.coords.accuracy > 100) throw new Error(`Location is too rough (±${Math.round(p.coords.accuracy)}m). Go near a window or outside and try again.`);
-      gym = { lat: p.coords.latitude, lng: p.coords.longitude };
-      document.getElementById("locmsg").textContent = `✅ Saved (accurate to ±${Math.round(p.coords.accuracy)}m)`;
-    } catch (err) { document.getElementById("locmsg").textContent = err.message; }
-    e.target.disabled = false;
-  };
+  wireGymPicker(document.getElementById("gpk"), (g) => { gym = g; const gn = document.getElementById("gn"); if (!gn.value && g.name) gn.value = g.name; });
   document.getElementById("save").onclick = async (e) => {
     const name = document.getElementById("nm").value.trim();
     if (!name) return toast("Add your name.");
     if (sel.length < MIN_DAYS) return toast(`Pick at least ${MIN_DAYS} days.`);
     e.target.disabled = true;
     const { error } = await sb.from("profiles").insert({ id: S.user.id, name, days: sel.sort(),
-      gym_name: document.getElementById("gn").value.trim() || null, gym_lat: gym?.lat ?? null, gym_lng: gym?.lng ?? null });
+      gym_name: document.getElementById("gn").value.trim() || null, gym_lat: gym?.lat ?? null, gym_lng: gym?.lng ?? null, gym_method: gym?.method ?? null });
     e.target.disabled = false;
     if (error) return toast(error.message);
     load();
@@ -290,12 +329,15 @@ $nav.onclick = (e) => { const t = e.target.closest("button")?.dataset.tab; if (t
 
 function renderToday() {
   const today = londonDate(), me = S.me;
-  const isDay = me.days.includes(dow(today));
+  const thisDays = daysFor(me, today, S.plans);
+  const isDay = thisDays.includes(dow(today));
+  const nextWs = addDays(weekStart(today), 7);
+  const nextPlan = S.plans[me.id + "|" + nextWs];
   const mine = S.checkins.filter(c => c.user_id === me.id && c.local_date === today);
   const done = mine.some(c => c.valid);
-  const season = computeSeason(S.profiles, S.checkins, today);
+  const season = computeSeason(S.profiles, S.checkins, today, S.plans);
   const myRow = season.current?.rows.find(r => r.id === me.id);
-  const fixed = DAY_ORDER.filter(d => me.days.includes(d)).map(d => DAY_NAMES[d]).join(", ");
+  const fixed = dayList(thisDays);
   $app.innerHTML = `
     <p class="muted">${new Date().toLocaleDateString("en-GB", { weekday:"long", day:"numeric", month:"long", timeZone:"Europe/London" })}</p>
     <h1>Hi ${esc(me.name)}</h1>
@@ -309,13 +351,18 @@ function renderToday() {
     </div>
     ${myRow ? `<div class="card"><div class="row"><b>${monthLabel(season.current.key)}</b><span class="muted">${fixed}</span></div>
       <div class="stats"><div><b>${myRow.hits}/${myRow.committed + myRow.pending}</b><span>done</span></div><div><b>${myRow.misses}</b><span>misses</span></div><div><b>${myRow.sessions}</b><span>sessions</span></div><div><b>${money(myRow.totalOwed)}</b><span>owed</span></div></div>
-      <div class="strip">${myRow.days.map(x => `<i class="${x.s}" title="${x.d}"></i>`).join("")}</div></div>` : ""}`;
+      <div class="strip">${myRow.days.map(x => `<i class="${x.s}" title="${x.d}"></i>`).join("")}</div></div>` : ""}
+    <div class="card"><div class="row"><div><b>Next week</b> <span class="muted">(from ${weekLabel(nextWs)})</span>
+      <p class="muted">${dayList(nextPlan || me.days)}${nextPlan ? "" : " · your default"}</p></div>
+      <button class="link" id="plan">Plan →</button></div>
+      <p class="muted">Set it by Sunday night. Once the week starts, it's locked.</p></div>`;
+  document.getElementById("plan").onclick = () => { S.tab = "me"; render(); setTimeout(() => document.getElementById("weeks")?.scrollIntoView({ behavior: "smooth" }), 50); };
   const ci = document.getElementById("ci"); if (ci) ci.onclick = openCamera;
 }
 
 function renderBoard() {
   const today = londonDate();
-  const { months, current } = computeSeason(S.profiles, S.checkins, today);
+  const { months, current } = computeSeason(S.profiles, S.checkins, today, S.plans);
   if (!current) { $app.innerHTML = `<h1>Board</h1><p class="muted">No one's set up yet.</p>`; return; }
   const leader = current.winner;
   const past = months.filter(m => m.finished).reverse();
@@ -327,6 +374,7 @@ function renderBoard() {
     ${current.rows.map((r, i) => `
       <div class="card ${leader && leader.id === r.id ? "lead" : ""}">
         <div class="row"><b>${i + 1}. ${esc(r.name)}</b>${r.pending ? `<span class="pill wait">due today</span>` : ""}</div>
+        <p class="muted">This week: ${dayList(daysFor(S.profiles.find(p => p.id === r.id), today, S.plans))}</p>
         <div class="stats"><div><b>${r.hits}/${r.committed}</b><span>hit</span></div><div><b>${r.misses}</b><span>misses</span></div><div><b>${r.sessions}</b><span>sessions</span></div><div><b>${money(r.totalOwed)}</b><span>owes${r.carried ? "*" : ""}</span></div></div>
         <div class="strip">${r.days.map(x => `<i class="${x.s}"></i>`).join("")}</div>
       </div>`).join("")}
@@ -359,34 +407,54 @@ async function renderFeed() {
 function renderMe() {
   const me = S.me, sel = [...me.days];
   const others = S.profiles.filter(p => p.id !== me.id && p.gym_set_at);
+  const today = londonDate(), ws0 = weekStart(today);
+  const weeks = [1, 2, 3, 4].map(n => addDays(ws0, 7 * n));
+  const wsel = Object.fromEntries(weeks.map(w => [w, [...(S.plans[me.id + "|" + w] || me.days)]]));
   $app.innerHTML = `
     <h1>${esc(me.name)}</h1><p class="muted">${esc(S.user.email)}</p>
-    <div class="card"><b>Fixed days</b><p class="muted">Changing these also changes how this month is scored, so agree it with the group first.</p>
-      ${daysPicker(sel)}<button class="btn ghost" id="sd">Save days</button></div>
+    <div class="card" id="weeks"><b>Plan your weeks</b>
+      <p class="muted">This week (from ${weekLabel(ws0)}): <b>${dayList(daysFor(me, today, S.plans))}</b> · locked</p>
+      <p class="muted">Change upcoming weeks any time before they start (minimum ${MIN_DAYS} days).</p>
+      ${weeks.map(w => `<div style="margin-top:14px"><div class="row"><span>Week of <b>${weekLabel(w)}</b></span>
+        <span class="muted">${S.plans[me.id + "|" + w] ? "planned" : "default"}</span></div>
+        <div class="days wk" data-w="${w}" style="margin-top:6px">${DAY_ORDER.map(d => `<button type="button" class="day ${wsel[w].includes(d) ? "on" : ""}" data-d="${d}">${DAY_NAMES[d]}</button>`).join("")}</div>
+        <button class="btn ghost sw" data-w="${w}" style="margin-top:8px;padding:10px">Save week</button></div>`).join("")}
+    </div>
+    <div class="card"><b>Default days</b><p class="muted">Used for any week you haven't planned. Changing these applies from next week; past weeks stay as they were.</p>
+      <div id="defdays">${daysPicker(sel)}</div><button class="btn ghost" id="sd">Save default days</button></div>
     <div class="card"><b>My gym</b>
-      <p class="muted">${me.gym_lat ? `${esc(me.gym_name || "Saved")} · set ${fmtTime(me.gym_set_at)}` : "Not set"}</p>
-      <p class="muted">Only reset this while you're standing in your gym. Everyone can see when it was last changed.</p>
-      <button class="btn ghost" id="sg">📍 Set gym to where I am now</button></div>
-    ${others.length ? `<div class="card"><b>Gym last changed</b>${others.map(p => `<p class="muted">${esc(p.name)}: ${fmtTime(p.gym_set_at)}</p>`).join("")}</div>` : ""}
+      <p class="muted">${me.gym_lat ? `${esc(me.gym_name || "Saved")} · ${me.gym_method === "search" ? "set by search" : "set at the gym"} · ${fmtTime(me.gym_set_at)}` : "Not set"}</p>
+      <p class="muted">If check ins say you're too far away, use "I'm at my gym" while you're there to fine tune it. Everyone can see when your gym was last changed.</p>
+      <div id="gpk">${gymPickerHTML()}</div></div>
+    ${others.length ? `<div class="card"><b>Everyone's gym</b>${others.map(p => `<p class="muted">${esc(p.name)}: ${esc(p.gym_name || "gym")} · ${p.gym_method === "search" ? "by search" : "at the gym"} · changed ${fmtTime(p.gym_set_at)}</p>`).join("")}</div>` : ""}
     <button class="btn ghost" id="out">Log out</button>`;
-  wireDays(sel);
+  document.querySelectorAll("#defdays .day").forEach(b => b.onclick = () => {
+    const d = +b.dataset.d, i = sel.indexOf(d); i >= 0 ? sel.splice(i, 1) : sel.push(d); b.classList.toggle("on"); });
+  document.querySelectorAll(".wk .day").forEach(b => b.onclick = () => {
+    const w = b.parentElement.dataset.w, arr = wsel[w], d = +b.dataset.d, i = arr.indexOf(d);
+    i >= 0 ? arr.splice(i, 1) : arr.push(d); b.classList.toggle("on"); });
+  document.querySelectorAll(".sw").forEach(b => b.onclick = async () => {
+    const w = b.dataset.w, arr = wsel[w];
+    if (arr.length < MIN_DAYS) return toast(`Pick at least ${MIN_DAYS} days.`);
+    b.disabled = true;
+    const { error } = await sb.from("week_plans").upsert({ user_id: me.id, week_start: w, days: [...arr].sort() });
+    b.disabled = false;
+    if (error) return toast(error.message.includes("row-level") ? "That week has already started, so it's locked." : error.message);
+    await refresh(); toast(`Week of ${weekLabel(w)} saved.`); render();
+  });
   document.getElementById("sd").onclick = async () => {
     if (sel.length < MIN_DAYS) return toast(`Pick at least ${MIN_DAYS} days.`);
     const { error } = await sb.from("profiles").update({ days: sel.sort() }).eq("id", me.id);
     if (error) return toast(error.message);
-    await refresh(); toast("Days saved."); render();
+    await refresh(); toast("Default days saved."); render();
   };
-  document.getElementById("sg").onclick = async (e) => {
-    e.target.disabled = true;
-    try {
-      const p = await getPosition();
-      if (p.coords.accuracy > 100) throw new Error(`Location is too rough (±${Math.round(p.coords.accuracy)}m). Try again near a window.`);
-      const { error } = await sb.from("profiles").update({ gym_lat: p.coords.latitude, gym_lng: p.coords.longitude }).eq("id", me.id);
-      if (error) throw error;
-      await refresh(); toast("Gym location saved."); render();
-    } catch (err) { toast(err.message); }
-    e.target.disabled = false;
-  };
+  wireGymPicker(document.getElementById("gpk"), async (g) => {
+    const upd = { gym_lat: g.lat, gym_lng: g.lng, gym_method: g.method };
+    if (g.name) upd.gym_name = g.name.slice(0, 40);
+    const { error } = await sb.from("profiles").update(upd).eq("id", me.id);
+    if (error) return toast(error.message);
+    await refresh(); toast("Gym saved."); render();
+  });
   document.getElementById("out").onclick = () => sb.auth.signOut();
 }
 
