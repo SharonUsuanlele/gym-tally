@@ -263,84 +263,24 @@ function wireDays(sel) {
 const dayList = (arr) => DAY_ORDER.filter(d => arr.includes(d)).map(d => DAY_NAMES[d]).join(", ");
 const weekLabel = (ws) => new Date(ws + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short", timeZone:"UTC" });
 
-/* Gym picker. Only real gyms (OpenStreetMap) can be chosen, so nobody can pin their house. */
-const GYM_TAGS = (c, t) => (c === "leisure" && ["fitness_centre","sports_centre","sports_hall"].includes(t)) || (c === "amenity" && t === "gym");
-async function gymLookup(body) {
-  const { data, error } = await sb.functions.invoke("gyms", { body });
-  if (error) {
-    let msg = "Gym lookup failed. Try again in a minute.";
-    try { const j = await error.context.json(); if (j.error) msg = j.error; } catch {}
-    throw new Error(msg);
-  }
-  return data;
-}
-async function gymsNear(lat, lng, radius) { return (await gymLookup({ action: "near", lat, lng, radius })).gyms || []; }
-
-function gymPickerHTML() {
-  return `<div class="gp">
-    <label>Find your gym (gym name and town, or a postcode)</label>
-    <div class="row"><input type="text" class="gp-q" placeholder="e.g. PureGym Preston or PR1 2AB"><button type="button" class="gp-s" style="background:var(--accent);color:#111">Search</button></div>
-    <div class="gp-res"></div>
-    <button type="button" class="btn ghost gp-here">📍 Or: I'm at my gym, find it from here</button>
-    <p class="muted gp-msg">Only real gyms can be picked.</p></div>`;
-}
-function wireGymPicker(root, onPick) {
-  const q = root.querySelector(".gp-q"), res = root.querySelector(".gp-res"), msg = root.querySelector(".gp-msg");
-  const show = (list, note) => {
-    if (!list.length) { res.innerHTML = `<p class="muted">${note || "No gyms found. Try the gym name plus the town, or a postcode."}</p>`; return; }
-    res.innerHTML = (note ? `<p class="muted">${note}</p>` : "") + list.slice(0, 8).map((g, i) =>
-      `<button type="button" class="btn ghost gp-r" data-i="${i}" style="text-align:left;font-weight:500;margin-top:8px"><b>${esc(g.name)}</b><br><span class="muted">${esc(g.addr || "")}${g.d != null ? ` · ${g.d < 1000 ? Math.round(g.d) + "m" : (g.d / 1000).toFixed(1) + "km"} away` : ""}</span></button>`).join("");
-    res.querySelectorAll(".gp-r").forEach(b => b.onclick = () => {
-      const g = list[+b.dataset.i]; res.innerHTML = ""; msg.textContent = `✅ ${g.name}${g.addr ? ", " + g.addr : ""}`;
-      onPick({ lat: g.lat, lng: g.lng, name: g.name, method: g.method || "search" });
-    });
-  };
-  const search = async () => {
-    const term = q.value.trim(); if (term.length < 3) return toast("Type a gym name or postcode.");
-    res.innerHTML = `<p class="muted">Searching…</p>`;
-    try {
-      const out = await gymLookup({ action: "search", q: term });
-      show(out.gyms || [], out.note || "");
-    } catch (e) { res.innerHTML = `<p class="muted">${esc(e.message || "Search failed. Check your connection and try again.")}</p>`; }
-  };
-  root.querySelector(".gp-s").onclick = search;
-  q.onkeydown = (e) => { if (e.key === "Enter") search(); };
-  root.querySelector(".gp-here").onclick = async (e) => {
-    e.target.disabled = true; msg.textContent = "Getting your location…";
-    try {
-      const p = await getPosition();
-      if (p.coords.accuracy > 100) throw new Error(`Location is too rough (±${Math.round(p.coords.accuracy)}m). Go near a window and try again.`);
-      msg.textContent = "Looking for your gym…";
-      const near = (await gymsNear(p.coords.latitude, p.coords.longitude, 150 + Math.min(p.coords.accuracy, 100)));
-      if (!near.length) throw new Error("There's no gym on the map where you're standing, so this can't be saved. Search for your gym by name instead.");
-      msg.textContent = "Which one are you in?";
-      show(near.map(g => ({ ...g, lat: p.coords.latitude, lng: p.coords.longitude, method: "here" })));
-    } catch (err) { msg.textContent = err.message; }
-    e.target.disabled = false;
-  };
-}
-
 function renderSetup() {
-  const sel = []; let gym = null;
+  const sel = [];
   $app.innerHTML = `
     <h1>Set up</h1><p class="muted">Do this once. You can plan different days for each week later.</p>
     <div class="card">
       <label>Your name</label><input id="nm" type="text" maxlength="30">
       <label>Your default gym days (minimum ${MIN_DAYS} a week)</label>${daysPicker(sel)}
       <p class="muted">Used for any week you don't plan separately.</p>
-      <label>Gym name</label><input id="gn" type="text" maxlength="40" placeholder="e.g. PureGym Preston">
-      <div id="gpk">${gymPickerHTML()}</div>
+      <p class="muted">📍 You'll pin your gym from the Me tab the first time you're there.</p>
       <button class="btn" id="save">Save and start</button>
     </div>`;
   wireDays(sel);
-  wireGymPicker(document.getElementById("gpk"), (g) => { gym = g; const gn = document.getElementById("gn"); if (!gn.value && g.name) gn.value = g.name; });
   document.getElementById("save").onclick = async (e) => {
     const name = document.getElementById("nm").value.trim();
     if (!name) return toast("Add your name.");
     if (sel.length < MIN_DAYS) return toast(`Pick at least ${MIN_DAYS} days.`);
     e.target.disabled = true;
-    const { error } = await sb.from("profiles").insert({ id: S.user.id, name, days: sel.sort(),
-      gym_name: document.getElementById("gn").value.trim() || null, gym_lat: gym?.lat ?? null, gym_lng: gym?.lng ?? null, gym_method: gym?.method ?? null });
+    const { error } = await sb.from("profiles").insert({ id: S.user.id, name, days: sel.sort() });
     e.target.disabled = false;
     if (error) return toast(error.message);
     load();
@@ -374,7 +314,7 @@ function renderToday() {
       ${done ? `<span class="pill ok">CHECKED IN</span><p class="big-num">Done today ✅</p>`
         : isDay ? `<span class="pill wait">GYM DAY</span><p class="big-num">Get it done 💪</p><p class="muted">${today < SEASON_START || today > SEASON_END ? "Outside the season, so this doesn't count." : `Check in by 11:59pm or it's a ${money(FINE)} miss.`}</p>`
         : `<span class="pill ok">REST DAY</span><p class="big-num">Rest up</p><p class="muted">Extra sessions still count towards your total.</p>`}
-      ${!me.gym_lat ? `<p class="muted" style="color:var(--warn)">⚠️ Set your gym location in Me first, or check ins won't count.</p>` : ""}
+      ${!me.gym_lat ? `<p class="muted" style="color:var(--warn)">⚠️ Pin your gym first (do it while you're there), or check ins won't count.</p><button class="btn ghost" id="pin">📍 Pin my gym</button>` : ""}
       ${done ? "" : `<button class="btn big" id="ci">📸 Check in</button>`}
       ${mine.filter(c => !c.valid).length ? `<p class="muted">You have ${mine.filter(c => !c.valid).length} check in(s) today that didn't count (too far from your gym).</p>` : ""}
     </div>
@@ -386,7 +326,8 @@ function renderToday() {
       <button class="link" id="plan">Plan →</button></div>
       <p class="muted">Set it by Sunday night. Once the week starts, it's locked.</p></div>`;
   document.getElementById("plan").onclick = () => { S.tab = "me"; render(); setTimeout(() => document.getElementById("weeks")?.scrollIntoView({ behavior: "smooth" }), 50); };
-  const ci = document.getElementById("ci"); if (ci) ci.onclick = openCamera;
+  const ci = document.getElementById("ci"); if (ci) ci.onclick = () => openCamera();
+  const pin = document.getElementById("pin"); if (pin) pin.onclick = () => { S.tab = "me"; render(); setTimeout(() => document.getElementById("mygym")?.scrollIntoView({ behavior: "smooth" }), 50); };
 }
 
 function renderBoard() {
@@ -420,6 +361,15 @@ function renderBoard() {
       </div>`).join("")}` : ""}`;
 }
 
+async function loadPhotos() {
+  const imgs = [...document.querySelectorAll(".feed img[data-p]")];
+  const need = [...new Set(imgs.map(i => i.dataset.p).filter(p => !S.urls[p]))];
+  if (need.length) {
+    const { data } = await sb.storage.from("checkins").createSignedUrls(need, 3600);
+    (data || []).forEach(x => { if (x.signedUrl) S.urls[x.path] = x.signedUrl; });
+  }
+  imgs.forEach(img => { const u = S.urls[img.dataset.p]; if (u) img.src = u; });
+}
 async function renderFeed() {
   const names = Object.fromEntries(S.profiles.map(p => [p.id, p.name]));
   const items = S.checkins.slice(0, 30);
@@ -429,14 +379,10 @@ async function renderFeed() {
       <p class="muted">${fmtTime(c.created_at)}${c.distance_m != null ? ` · ${c.distance_m}m from gym` : " · no gym set"}</p>
       <img data-p="${esc(c.photo_path)}" alt="">
     </div>`).join("")}</div>`;
-  const need = items.map(c => c.photo_path).filter(p => !S.urls[p]);
-  if (need.length) {
-    const { data } = await sb.storage.from("checkins").createSignedUrls(need, 3600);
-    (data || []).forEach(x => { if (x.signedUrl) S.urls[x.path] = x.signedUrl; });
-  }
-  document.querySelectorAll(".feed img").forEach(img => { const u = S.urls[img.dataset.p]; if (u) img.src = u; });
+  loadPhotos();
 }
 
+const mapUrl = (p) => `https://www.openstreetmap.org/?mlat=${p.gym_lat}&mlon=${p.gym_lng}#map=18/${p.gym_lat}/${p.gym_lng}`;
 function renderMe() {
   const me = S.me, sel = [...me.days];
   const others = S.profiles.filter(p => p.id !== me.id && p.gym_set_at);
@@ -455,11 +401,15 @@ function renderMe() {
     </div>
     <div class="card"><b>Default days</b><p class="muted">Used for any week you haven't planned. Changing these applies from next week; past weeks stay as they were.</p>
       <div id="defdays">${daysPicker(sel)}</div><button class="btn ghost" id="sd">Save default days</button></div>
-    <div class="card"><b>My gym</b>
-      <p class="muted">${me.gym_lat ? `${esc(me.gym_name || "Saved")} · ${me.gym_method === "search" ? "set by search" : "set at the gym"} · ${fmtTime(me.gym_set_at)}` : "Not set"}</p>
-      <p class="muted">If check ins say you're too far away, use "I'm at my gym" while you're there to fine tune it. Everyone can see when your gym was last changed.</p>
-      <div id="gpk">${gymPickerHTML()}</div></div>
-    ${others.length ? `<div class="card"><b>Everyone's gym</b>${others.map(p => `<p class="muted">${esc(p.name)}: ${esc(p.gym_name || "gym")} · ${p.gym_method === "search" ? "by search" : "at the gym"} · changed ${fmtTime(p.gym_set_at)}</p>`).join("")}</div>` : ""}
+    <div class="card" id="mygym"><b>My gym</b>
+      ${me.gym_lat ? `<p class="muted">${esc(me.gym_name || "My gym")} · pinned ${fmtTime(me.gym_set_at)} · <a href="${mapUrl(me)}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></p>
+        ${me.gym_photo ? `<div class="feed"><img data-p="${esc(me.gym_photo)}" alt=""></div>` : ""}` : `<p class="muted">Not pinned yet.</p>`}
+      <label>Gym name</label><input id="gn" type="text" maxlength="40" value="${esc(me.gym_name || "")}" placeholder="e.g. PureGym Preston">
+      <p class="muted">Stand inside your gym, tap below, and take a photo of the gym. Your pin and photo are shown to everyone.</p>
+      <button class="btn" id="pingym">📍 I'm at my gym: pin it with a photo</button></div>
+    ${others.length ? `<div class="card"><b>Everyone's gym</b><p class="muted">Tap a map to check each pin is really a gym.</p>${others.map(p => `
+      <div style="margin-top:14px"><b>${esc(p.name)}</b> <span class="muted">· ${esc(p.gym_name || "gym")} · pinned ${fmtTime(p.gym_set_at)} · <a href="${mapUrl(p)}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></span>
+      ${p.gym_photo ? `<div class="feed"><img data-p="${esc(p.gym_photo)}" alt=""></div>` : ""}</div>`).join("")}</div>` : ""}
     <button class="btn ghost" id="out">Log out</button>`;
   document.querySelectorAll("#defdays .day").forEach(b => b.onclick = () => {
     const d = +b.dataset.d, i = sel.indexOf(d); i >= 0 ? sel.splice(i, 1) : sel.push(d); b.classList.toggle("on"); });
@@ -481,25 +431,31 @@ function renderMe() {
     if (error) return toast(error.message);
     await refresh(); toast("Default days saved."); render();
   };
-  wireGymPicker(document.getElementById("gpk"), async (g) => {
-    const upd = { gym_lat: g.lat, gym_lng: g.lng, gym_method: g.method };
-    if (g.name) upd.gym_name = g.name.slice(0, 40);
-    const { error } = await sb.from("profiles").update(upd).eq("id", me.id);
-    if (error) return toast(error.message);
-    await refresh(); toast("Gym saved."); render();
-  });
+  document.getElementById("pingym").onclick = () => {
+    const gymName = document.getElementById("gn").value.trim().slice(0, 40) || null;
+    openCamera({ label: "Pin as my gym", facing: "environment", onConfirm: async (blob, pos) => {
+      if (pos.coords.accuracy > 100) throw new Error(`Location is too rough (±${Math.round(pos.coords.accuracy)}m). Move nearer a window and try again.`);
+      const path = `${S.user.id}/gym-${Date.now()}.jpg`;
+      const up = await sb.storage.from("checkins").upload(path, blob, { contentType: "image/jpeg" });
+      if (up.error) throw up.error;
+      const { error } = await sb.from("profiles").update({ gym_lat: pos.coords.latitude, gym_lng: pos.coords.longitude, gym_method: "here", gym_photo: path, gym_name: gymName }).eq("id", me.id);
+      if (error) throw error;
+      return "📍 Gym pinned.";
+    } });
+  };
+  loadPhotos();
   document.getElementById("out").onclick = () => sb.auth.signOut();
 }
 
 /* --- live camera check in --- */
-async function openCamera() {
-  let stream = null, facing = "user", blob = null;
+async function openCamera(opts = {}) {
+  let stream = null, facing = opts.facing || "user", blob = null;
   const posP = getPosition();               // start GPS straight away
   posP.catch(() => {});
   const ov = document.createElement("div"); ov.className = "cam";
   ov.innerHTML = `<video autoplay playsinline muted></video><img class="hidden" alt="">
     <div class="bar" id="b1"><button class="btn ghost" id="x">Cancel</button><button class="btn ghost" id="fl">🔄</button><button class="btn shutter" id="sh">Take photo</button></div>
-    <div class="bar hidden" id="b2"><button class="btn ghost" id="re">Retake</button><button class="btn" id="up">Check in</button></div>`;
+    <div class="bar hidden" id="b2"><button class="btn ghost" id="re">Retake</button><button class="btn" id="up">${opts.label || "Check in"}</button></div>`;
   document.body.appendChild(ov);
   const v = ov.querySelector("video"), im = ov.querySelector("img");
   const stop = () => stream && stream.getTracks().forEach(t => t.stop());
@@ -529,6 +485,7 @@ async function openCamera() {
     try {
       const pos = await posP.catch(() => getPosition());
       e.target.textContent = "Uploading…";
+      if (opts.onConfirm) { const m = await opts.onConfirm(blob, pos); close(); await refresh(); render(); toast(m); return; }
       const path = `${S.user.id}/${Date.now()}.jpg`;
       const up = await sb.storage.from("checkins").upload(path, blob, { contentType: "image/jpeg" });
       if (up.error) throw up.error;
@@ -539,7 +496,7 @@ async function openCamera() {
       if (data.valid) toast("✅ Checked in. Nice one!");
       else if (data.distance_m == null) toast("Saved, but it didn't count: set your gym location in Me first.", 5000);
       else toast(`Didn't count: you're ${data.distance_m}m from your gym (must be within 200m).`, 5000);
-    } catch (err) { e.target.disabled = false; e.target.textContent = "Check in"; toast(err.message || "Something went wrong. Try again."); }
+    } catch (err) { e.target.disabled = false; e.target.textContent = opts.label || "Check in"; toast(err.message || "Something went wrong. Try again."); }
   };
 }
 
