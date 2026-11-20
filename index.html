@@ -209,7 +209,7 @@ async function refresh() {
   const [p, w, c] = await Promise.all([
     sb.from("profiles").select("*"),
     sb.from("week_plans").select("user_id,week_start,days"),
-    sb.from("checkins").select("id,user_id,created_at,local_date,distance_m,valid,photo_path").order("created_at", { ascending: false }).limit(2000)
+    sb.from("checkins").select("id,user_id,created_at,local_date,distance_m,valid,photo_path,lat,lng").order("created_at", { ascending: false }).limit(2000)
   ]);
   S.profiles = p.data || [];
   S.checkins = c.data || [];
@@ -376,7 +376,7 @@ async function renderFeed() {
   $app.innerHTML = `<h1>Feed</h1>${items.length ? "" : `<p class="muted">No check ins yet.</p>`}<div class="feed">${items.map(c => `
     <div class="card"><div class="row"><b>${esc(names[c.user_id] || "?")}</b>
       ${c.valid ? `<span class="pill ok">COUNTED</span>` : `<span class="pill bad">DIDN'T COUNT</span>`}</div>
-      <p class="muted">${fmtTime(c.created_at)}${c.distance_m != null ? ` · ${c.distance_m}m from gym` : " · no gym set"}</p>
+      <p class="muted">${fmtTime(c.created_at)} · ${c.distance_m != null ? `${c.distance_m}m from their gym` : "no gym pinned yet"} · <a href="https://www.openstreetmap.org/?mlat=${c.lat}&mlon=${c.lng}#map=18/${c.lat}/${c.lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></p>
       <img data-p="${esc(c.photo_path)}" alt="">
     </div>`).join("")}</div>`;
   loadPhotos();
