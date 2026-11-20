@@ -348,7 +348,7 @@ function renderBoard() {
         ${(() => { const pr = S.profiles.find(p => p.id === r.id);
           const recent = pr.gym_set_at && (Date.now() - new Date(pr.gym_set_at)) < 7 * 864e5 && pr.gym_set_at > pr.created_at && (Date.now() - new Date(pr.created_at)) > 864e5;
           return `<p class="muted">This week: ${dayList(daysFor(pr, today, S.plans))}</p>
-          <p class="muted">${pr.gym_lat ? `${esc(pr.gym_name || "Gym")} · <a href="https://www.openstreetmap.org/?mlat=${pr.gym_lat}&mlon=${pr.gym_lng}#map=18/${pr.gym_lat}/${pr.gym_lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a>` : "No gym set"}${recent ? ` <span class="pill wait">gym changed ${fmtTime(pr.gym_set_at)}</span>` : ""}</p>`; })()}
+          <p class="muted">${pr.gym_lat ? `${esc(pr.gym_name || "Gym")} · <a href="https://www.google.com/maps/search/?api=1&query=${pr.gym_lat},${pr.gym_lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a>` : "No gym set"}${recent ? ` <span class="pill wait">gym changed ${fmtTime(pr.gym_set_at)}</span>` : ""}</p>`; })()}
         <div class="stats"><div><b>${r.hits}/${r.committed}</b><span>hit</span></div><div><b>${r.misses}</b><span>misses</span></div><div><b>${r.sessions}</b><span>sessions</span></div><div><b>${money(r.totalOwed)}</b><span>owes${r.carried ? "*" : ""}</span></div></div>
         <div class="strip">${r.days.map(x => `<i class="${x.s}"></i>`).join("")}</div>
       </div>`).join("")}
@@ -376,13 +376,13 @@ async function renderFeed() {
   $app.innerHTML = `<h1>Feed</h1>${items.length ? "" : `<p class="muted">No check ins yet.</p>`}<div class="feed">${items.map(c => `
     <div class="card"><div class="row"><b>${esc(names[c.user_id] || "?")}</b>
       ${c.valid ? `<span class="pill ok">COUNTED</span>` : `<span class="pill bad">DIDN'T COUNT</span>`}</div>
-      <p class="muted">${fmtTime(c.created_at)} · ${c.distance_m != null ? `${c.distance_m}m from their gym` : "no gym pinned yet"} · <a href="https://www.openstreetmap.org/?mlat=${c.lat}&mlon=${c.lng}#map=18/${c.lat}/${c.lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></p>
+      <p class="muted">${fmtTime(c.created_at)} · ${c.distance_m != null ? `${c.distance_m}m from their gym` : "no gym pinned yet"} · <a href="https://www.google.com/maps/search/?api=1&query=${c.lat},${c.lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></p>
       <img data-p="${esc(c.photo_path)}" alt="">
     </div>`).join("")}</div>`;
   loadPhotos();
 }
 
-const mapUrl = (p) => `https://www.openstreetmap.org/?mlat=${p.gym_lat}&mlon=${p.gym_lng}#map=18/${p.gym_lat}/${p.gym_lng}`;
+const mapUrl = (p) => `https://www.google.com/maps/search/?api=1&query=${p.gym_lat},${p.gym_lng}`;
 function renderMe() {
   const me = S.me, sel = [...me.days];
   const others = S.profiles.filter(p => p.id !== me.id && p.gym_set_at);
