@@ -265,19 +265,17 @@ const weekLabel = (ws) => new Date(ws + "T12:00:00Z").toLocaleDateString("en-GB"
 
 /* Gym picker. Only real gyms (OpenStreetMap) can be chosen, so nobody can pin their house. */
 const GYM_TAGS = (c, t) => (c === "leisure" && ["fitness_centre","sports_centre","sports_hall"].includes(t)) || (c === "amenity" && t === "gym");
-async function gymsNear(lat, lng, radius) {
-  const q = `[out:json][timeout:20];(nwr(around:${radius},${lat},${lng})["leisure"~"^(fitness_centre|sports_centre|sports_hall)$"];nwr(around:${radius},${lat},${lng})["amenity"="gym"];);out center 40;`;
-  const r = await fetch("https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q));
-  if (!r.ok) throw new Error("Gym lookup is busy. Try again in a minute.");
-  const j = await r.json();
-  const toRad = (x) => x * Math.PI / 180;
-  const dist = (a, b, c, d) => 2 * 6371000 * Math.asin(Math.sqrt(Math.sin(toRad(c - a) / 2) ** 2 + Math.cos(toRad(a)) * Math.cos(toRad(c)) * Math.sin(toRad(d - b) / 2) ** 2));
-  return j.elements.map(e => {
-    const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon, t = e.tags || {};
-    const addr = [t["addr:street"], t["addr:city"] || t["addr:town"], t["addr:postcode"]].filter(Boolean).join(", ");
-    return { lat: la, lng: lo, name: t.name || t.brand || "Unnamed gym", addr, d: dist(lat, lng, la, lo) };
-  }).filter(g => g.lat != null).sort((a, b) => a.d - b.d);
+async function gymLookup(body) {
+  const { data, error } = await sb.functions.invoke("gyms", { body });
+  if (error) {
+    let msg = "Gym lookup failed. Try again in a minute.";
+    try { const j = await error.context.json(); if (j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  return data;
 }
+async function gymsNear(lat, lng, radius) { return (await gymLookup({ action: "near", lat, lng, radius })).gyms || []; }
+
 function gymPickerHTML() {
   return `<div class="gp">
     <label>Find your gym (gym name and town, or a postcode)</label>
@@ -301,14 +299,8 @@ function wireGymPicker(root, onPick) {
     const term = q.value.trim(); if (term.length < 3) return toast("Type a gym name or postcode.");
     res.innerHTML = `<p class="muted">Searching…</p>`;
     try {
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=gb&limit=10&q=${encodeURIComponent(term)}`, { headers: { "Accept-Language": "en-GB" } });
-      const list = await r.json();
-      const gyms = list.filter(x => GYM_TAGS(x.category, x.type)).map(x => ({ lat: +x.lat, lng: +x.lon, name: x.name || x.display_name.split(",")[0], addr: x.display_name.split(",").slice(1, 4).join(",").trim() }));
-      if (gyms.length) return show(gyms);
-      if (!list.length) return show([]);
-      res.innerHTML = `<p class="muted">Looking for gyms near ${esc(list[0].display_name.split(",")[0])}…</p>`;
-      const near = await gymsNear(+list[0].lat, +list[0].lon, 2500);
-      show(near, near.length ? `Gyms near ${esc(list[0].display_name.split(",")[0])}:` : "No gyms found nearby. Try your gym's name and town.");
+      const out = await gymLookup({ action: "search", q: term });
+      show(out.gyms || [], out.note || "");
     } catch (e) { res.innerHTML = `<p class="muted">${esc(e.message || "Search failed. Check your connection and try again.")}</p>`; }
   };
   root.querySelector(".gp-s").onclick = search;
