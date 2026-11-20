@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Gym Tally</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--bg:#0f1115;--card:#181b22;--line:#262a33;--text:#f2f3f5;--muted:#8b91a0;--accent:#c6f432;--bad:#ff5d5d;--ok:#4ade80;--warn:#fbbf24}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  body{padding:env(safe-area-inset-top) 0 calc(76px + env(safe-area-inset-bottom))}
+  main{max-width:560px;margin:0 auto;padding:18px 16px}
+  h1{font-size:28px;margin:6px 0 4px;letter-spacing:-.02em}
+  h2{font-size:18px;margin:22px 0 10px}
+  p{margin:6px 0}
+  .muted{color:var(--muted);font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0}
+  label{display:block;font-size:14px;color:var(--muted);margin:12px 0 6px}
+  input[type=text],input[type=email],input[type=password]{width:100%;padding:13px 14px;border-radius:12px;border:1px solid var(--line);background:#0b0d11;color:var(--text);font-size:16px}
+  button{font:inherit;border:0;border-radius:12px;padding:13px 16px;cursor:pointer;font-weight:600}
+  .btn{background:var(--accent);color:#111;width:100%;margin-top:14px}
+  .btn.big{padding:20px;font-size:19px;border-radius:16px}
+  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  .btn:disabled{opacity:.5}
+  .link{background:none;color:var(--accent);padding:6px 0;font-weight:500}
+  .days{display:flex;gap:6px;flex-wrap:wrap}
+  .day{flex:1;min-width:40px;text-align:center;padding:11px 0;border-radius:10px;border:1px solid var(--line);background:#0b0d11;color:var(--muted);font-weight:600;font-size:14px}
+  .day.on{background:var(--accent);color:#111;border-color:var(--accent)}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .pill{display:inline-block;font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px}
+  .pill.ok{background:rgba(74,222,128,.15);color:var(--ok)}
+  .pill.bad{background:rgba(255,93,93,.15);color:var(--bad)}
+  .pill.wait{background:rgba(251,191,36,.15);color:var(--warn)}
+  .big-num{font-size:34px;font-weight:800;letter-spacing:-.02em}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px;text-align:center}
+  .stats div{background:#0b0d11;border-radius:10px;padding:8px 2px}
+  .stats b{display:block;font-size:18px}
+  .stats span{font-size:11px;color:var(--muted)}
+  .strip{display:flex;gap:3px;flex-wrap:wrap;margin-top:10px}
+  .strip i{width:14px;height:14px;border-radius:4px;background:#0b0d11;display:inline-block}
+  .strip i.h{background:var(--ok)} .strip i.m{background:var(--bad)} .strip i.p{background:var(--warn)} .strip i.x{background:#2a2f3a}
+  .lead{border-color:var(--accent)}
+  nav{position:fixed;left:0;right:0;bottom:0;background:rgba(15,17,21,.96);border-top:1px solid var(--line);display:flex;padding:6px 6px calc(6px + env(safe-area-inset-bottom));backdrop-filter:blur(8px)}
+  nav button{flex:1;background:none;color:var(--muted);padding:10px 0;font-size:13px}
+  nav button.on{color:var(--accent)}
+  .cam{position:fixed;inset:0;background:#000;z-index:20;display:flex;flex-direction:column}
+  .cam video,.cam img{flex:1;width:100%;object-fit:cover;min-height:0}
+  .cam .bar{display:flex;gap:10px;padding:14px 14px calc(14px + env(safe-area-inset-bottom));background:#000}
+  .cam .bar button{flex:1}
+  .shutter{background:#fff;color:#111}
+  .feed img{width:100%;border-radius:12px;display:block;margin-top:10px;aspect-ratio:3/4;object-fit:cover;background:#0b0d11}
+  .toast{position:fixed;left:16px;right:16px;bottom:90px;max-width:528px;margin:0 auto;background:#fff;color:#111;padding:13px 16px;border-radius:12px;font-weight:600;z-index:30;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+  .hidden{display:none!important}
+  .center{text-align:center}
+</style>
+</head>
+<body>
+<main id="app"><p class="muted">Loading…</p></main>
+<nav id="nav" class="hidden">
+  <button data-tab="today">Today</button>
+  <button data-tab="board">Board</button>
+  <button data-tab="feed">Feed</button>
+  <button data-tab="me">Me</button>
+</nav>
+
+<script>
+/* ===== CONFIG ===== */
+const SUPABASE_URL = "https://uvtvdkrxyctbzqzndbaw.supabase.co";
+const SUPABASE_KEY = "sb_publishable_NteYl5iwu05kpbvx4vPg9Q_S3rb5Wh4";
+const FINE = 5;            // £ per missed day
+const MIN_DAYS = 3;        // minimum committed days per week
+const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const DAY_ORDER = [1,2,3,4,5,6,0];
+
+/* ===== SCORING (pure, no DOM) ===== */
+const londonDate = (d = new Date()) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year:"numeric", month:"2-digit", day:"2-digit" }).format(d);
+const dow = (s) => new Date(s + "T12:00:00Z").getUTCDay();
+const addDays = (s, n) => { const d = new Date(s + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0,10); };
+const monthKey = (s) => s.slice(0,7);
+const monthStart = (k) => k + "-01";
+const monthEnd = (k) => { const [y,m] = k.split("-").map(Number); return new Date(Date.UTC(y, m, 0, 12)).toISOString().slice(0,10); };
+const nextMonth = (k) => { const [y,m] = k.split("-").map(Number); return m === 12 ? `${y+1}-01` : `${y}-${String(m+1).padStart(2,"0")}`; };
+const monthLabel = (k) => new Date(k + "-15T12:00:00Z").toLocaleDateString("en-GB", { month:"long", year:"numeric", timeZone:"UTC" });
+
+function scoreMonth(profiles, checkins, key, today) {
+  const valid = new Set(checkins.filter(c => c.valid).map(c => c.user_id + "|" + c.local_date));
+  const rows = profiles.map(p => {
+    const from = p.start_date > monthStart(key) ? p.start_date : monthStart(key);
+    const to = monthEnd(key) < today ? monthEnd(key) : today;
+    const days = []; let hits = 0, misses = 0, pending = 0;
+    for (let d = monthStart(key); d <= monthEnd(key); d = addDays(d, 1)) {
+      let s = "x";
+      if (d >= from && d <= to && p.days.includes(dow(d))) {
+        if (valid.has(p.id + "|" + d)) { s = "h"; hits++; }
+        else if (d < today) { s = "m"; misses++; }
+        else { s = "p"; pending++; }
+      } else if (d >= from && d <= to && valid.has(p.id + "|" + d)) s = "h";
+      days.push({ d, s });
+    }
+    let sessions = 0;
+    for (const v of valid) { const [u, d] = v.split("|"); if (u === p.id && monthKey(d) === key && d >= p.start_date) sessions++; }
+    const committed = hits + misses;
+    return { id: p.id, name: p.name, hits, misses, pending, committed, sessions, owed: misses * FINE,
+             rate: committed ? hits / committed : 1, days };
+  }).filter(r => r.committed + r.pending + r.sessions > 0 || profiles.find(p => p.id === r.id).start_date <= monthEnd(key));
+  return rows;
+}
+
+function pickWinner(rows) {
+  if (!rows.length) return null;
+  const sorted = [...rows].sort((a, b) => a.misses - b.misses || b.sessions - a.sessions);
+  const top = sorted[0], second = sorted[1];
+  if (second && second.misses === top.misses && second.sessions === top.sessions) return null;
+  return top;
+}
+
+/* Runs every month from the first start date to the current one, carrying unpaid fines through rollovers. */
+function computeSeason(profiles, checkins, today) {
+  if (!profiles.length) return { months: [], current: null };
+  const first = profiles.map(p => p.start_date).sort()[0];
+  const nowKey = monthKey(today);
+  const carry = {}; profiles.forEach(p => carry[p.id] = 0);
+  const months = [];
+  for (let k = monthKey(first); k <= nowKey; k = nextMonth(k)) {
+    const active = profiles.filter(p => p.start_date <= monthEnd(k));
+    const rows = scoreMonth(active, checkins, k, today)
+      .sort((a, b) => a.misses - b.misses || b.sessions - a.sessions || a.name.localeCompare(b.name));
+    rows.forEach(r => { r.carried = carry[r.id] || 0; r.totalOwed = r.carried + r.owed; });
+    const pot = rows.reduce((s, r) => s + r.totalOwed, 0);
+    const finished = k < nowKey;
+    const winner = pickWinner(rows);
+    const m = { key: k, rows, pot, finished, winner, payments: [], rolledOver: false };
+    if (finished) {
+      if (winner) {
+        m.payments = rows.filter(r => r.id !== winner.id && r.totalOwed > 0).map(r => ({ from: r.name, to: winner.name, amount: r.totalOwed }));
+        profiles.forEach(p => carry[p.id] = 0);
+      } else {
+        m.rolledOver = true;
+        rows.forEach(r => carry[r.id] = r.totalOwed);
+      }
+    }
+    months.push(m);
+  }
+  return { months, current: months[months.length - 1] };
+}
+/* ===== END SCORING ===== */
+
+/* ===== APP ===== */
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+const $app = document.getElementById("app");
+const $nav = document.getElementById("nav");
+const S = { user: null, member: false, profiles: [], checkins: [], me: null, tab: "today", urls: {} };
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const money = (n) => "£" + n.toFixed(n % 1 ? 2 : 0);
+function toast(msg, ms = 3200) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
+const fmtTime = (iso) => new Date(iso).toLocaleString("en-GB", { timeZone:"Europe/London", weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" });
+
+function getPosition() {
+  return new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error("Location isn't available on this device."));
+    navigator.geolocation.getCurrentPosition(res, (e) => rej(new Error(e.code === 1 ? "Location permission was blocked. Allow it in your browser settings." : "Couldn't get your location. Try again.")),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  });
+}
+
+async function boot() {
+  if (!sb) { $app.innerHTML = `<p>Couldn't load. Check your connection and refresh.</p>`; return; }
+  const { data } = await sb.auth.getSession();
+  S.user = data.session?.user || null;
+  sb.auth.onAuthStateChange((_e, session) => {
+    const was = S.user?.id; S.user = session?.user || null;
+    if (was !== S.user?.id) load();
+  });
+  load();
+}
+
+async function load() {
+  if (!S.user) { $nav.classList.add("hidden"); return renderAuth(); }
+  const { data: isM } = await sb.rpc("is_member");
+  S.member = !!isM;
+  if (!S.member) { $nav.classList.add("hidden"); return renderNotMember(); }
+  await refresh();
+  if (!S.me) { $nav.classList.add("hidden"); return renderSetup(); }
+  $nav.classList.remove("hidden");
+  render();
+}
+
+async function refresh() {
+  const [p, c] = await Promise.all([
+    sb.from("profiles").select("*"),
+    sb.from("checkins").select("id,user_id,created_at,local_date,distance_m,valid,photo_path").order("created_at", { ascending: false }).limit(2000)
+  ]);
+  S.profiles = p.data || [];
+  S.checkins = c.data || [];
+  S.me = S.profiles.find(x => x.id === S.user.id) || null;
+}
+
+/* --- auth --- */
+function renderAuth(mode = "login") {
+  const signup = mode === "signup";
+  $app.innerHTML = `
+    <h1>Gym Tally 🏋️</h1>
+    <p class="muted">Private to the group. ${signup ? "Create your account with the email you gave the group admin." : "Log in to check in."}</p>
+    <div class="card">
+      <label>Email</label><input id="em" type="email" autocomplete="email" inputmode="email">
+      <label>Password</label><input id="pw" type="password" autocomplete="${signup ? "new-password" : "current-password"}" placeholder="${signup ? "At least 8 characters" : ""}">
+      <button class="btn" id="go">${signup ? "Create account" : "Log in"}</button>
+      <p class="center"><button class="link" id="sw">${signup ? "Already have an account? Log in" : "First time? Create an account"}</button></p>
+    </div>`;
+  document.getElementById("sw").onclick = () => renderAuth(signup ? "login" : "signup");
+  document.getElementById("go").onclick = async (e) => {
+    const email = document.getElementById("em").value.trim(), password = document.getElementById("pw").value;
+    if (!email || !password) return toast("Enter your email and password.");
+    if (signup && password.length < 8) return toast("Use at least 8 characters.");
+    e.target.disabled = true;
+    const r = signup ? await sb.auth.signUp({ email, password }) : await sb.auth.signInWithPassword({ email, password });
+    e.target.disabled = false;
+    if (r.error) return toast(r.error.message);
+    if (signup && !r.data.session) toast("Account made. If it asks you to confirm your email, tell the group admin.");
+  };
+}
+
+function renderNotMember() {
+  $app.innerHTML = `<h1>Not on the list</h1>
+    <p class="muted">${esc(S.user.email)} isn't in this group. Ask the group admin to add this email, then refresh.</p>
+    <button class="btn ghost" id="out">Log out</button>`;
+  document.getElementById("out").onclick = () => sb.auth.signOut();
+}
+
+/* --- setup / profile --- */
+function daysPicker(selected) {
+  return `<div class="days">${DAY_ORDER.map(d => `<button type="button" class="day ${selected.includes(d) ? "on" : ""}" data-d="${d}">${DAY_NAMES[d]}</button>`).join("")}</div>`;
+}
+function wireDays(sel) {
+  document.querySelectorAll(".day").forEach(b => b.onclick = () => {
+    const d = +b.dataset.d; const i = sel.indexOf(d);
+    i >= 0 ? sel.splice(i, 1) : sel.push(d); b.classList.toggle("on");
+  });
+}
+
+function renderSetup() {
+  const sel = []; let gym = null;
+  $app.innerHTML = `
+    <h1>Set up</h1><p class="muted">Do this once. Set your gym while you're standing in it.</p>
+    <div class="card">
+      <label>Your name</label><input id="nm" type="text" maxlength="30">
+      <label>Your fixed gym days (minimum ${MIN_DAYS})</label>${daysPicker(sel)}
+      <label>Gym name</label><input id="gn" type="text" maxlength="40" placeholder="e.g. PureGym Preston">
+      <button class="btn ghost" id="loc">📍 I'm at my gym, save this location</button>
+      <p class="muted" id="locmsg">Not set yet. You can skip this and set it later from Me, but check ins won't count until it's set.</p>
+      <button class="btn" id="save">Save and start</button>
+    </div>`;
+  wireDays(sel);
+  document.getElementById("loc").onclick = async (e) => {
+    e.target.disabled = true; document.getElementById("locmsg").textContent = "Getting your location…";
+    try {
+      const p = await getPosition();
+      if (p.coords.accuracy > 100) throw new Error(`Location is too rough (±${Math.round(p.coords.accuracy)}m). Go near a window or outside and try again.`);
+      gym = { lat: p.coords.latitude, lng: p.coords.longitude };
+      document.getElementById("locmsg").textContent = `✅ Saved (accurate to ±${Math.round(p.coords.accuracy)}m)`;
+    } catch (err) { document.getElementById("locmsg").textContent = err.message; }
+    e.target.disabled = false;
+  };
+  document.getElementById("save").onclick = async (e) => {
+    const name = document.getElementById("nm").value.trim();
+    if (!name) return toast("Add your name.");
+    if (sel.length < MIN_DAYS) return toast(`Pick at least ${MIN_DAYS} days.`);
+    e.target.disabled = true;
+    const { error } = await sb.from("profiles").insert({ id: S.user.id, name, days: sel.sort(),
+      gym_name: document.getElementById("gn").value.trim() || null, gym_lat: gym?.lat ?? null, gym_lng: gym?.lng ?? null });
+    e.target.disabled = false;
+    if (error) return toast(error.message);
+    load();
+  };
+}
+
+/* --- main views --- */
+function render() {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
+  ({ today: renderToday, board: renderBoard, feed: renderFeed, me: renderMe })[S.tab]();
+  window.scrollTo(0, 0);
+}
+$nav.onclick = (e) => { const t = e.target.closest("button")?.dataset.tab; if (t) { S.tab = t; render(); } };
+
+function renderToday() {
+  const today = londonDate(), me = S.me;
+  const isDay = me.days.includes(dow(today));
+  const mine = S.checkins.filter(c => c.user_id === me.id && c.local_date === today);
+  const done = mine.some(c => c.valid);
+  const season = computeSeason(S.profiles, S.checkins, today);
+  const myRow = season.current?.rows.find(r => r.id === me.id);
+  const fixed = DAY_ORDER.filter(d => me.days.includes(d)).map(d => DAY_NAMES[d]).join(", ");
+  $app.innerHTML = `
+    <p class="muted">${new Date().toLocaleDateString("en-GB", { weekday:"long", day:"numeric", month:"long", timeZone:"Europe/London" })}</p>
+    <h1>Hi ${esc(me.name)}</h1>
+    <div class="card">
+      ${done ? `<span class="pill ok">CHECKED IN</span><p class="big-num">Done today ✅</p>`
+        : isDay ? `<span class="pill wait">GYM DAY</span><p class="big-num">Get it done 💪</p><p class="muted">Check in by 11:59pm or it's a ${money(FINE)} miss.</p>`
+        : `<span class="pill ok">REST DAY</span><p class="big-num">Rest up</p><p class="muted">Extra sessions still count towards your total.</p>`}
+      ${!me.gym_lat ? `<p class="muted" style="color:var(--warn)">⚠️ Set your gym location in Me first, or check ins won't count.</p>` : ""}
+      ${done ? "" : `<button class="btn big" id="ci">📸 Check in</button>`}
+      ${mine.filter(c => !c.valid).length ? `<p class="muted">You have ${mine.filter(c => !c.valid).length} check in(s) today that didn't count (too far from your gym).</p>` : ""}
+    </div>
+    ${myRow ? `<div class="card"><div class="row"><b>${monthLabel(season.current.key)}</b><span class="muted">${fixed}</span></div>
+      <div class="stats"><div><b>${myRow.hits}/${myRow.committed + myRow.pending}</b><span>done</span></div><div><b>${myRow.misses}</b><span>misses</span></div><div><b>${myRow.sessions}</b><span>sessions</span></div><div><b>${money(myRow.totalOwed)}</b><span>owed</span></div></div>
+      <div class="strip">${myRow.days.map(x => `<i class="${x.s}" title="${x.d}"></i>`).join("")}</div></div>` : ""}`;
+  const ci = document.getElementById("ci"); if (ci) ci.onclick = openCamera;
+}
+
+function renderBoard() {
+  const today = londonDate();
+  const { months, current } = computeSeason(S.profiles, S.checkins, today);
+  if (!current) { $app.innerHTML = `<h1>Board</h1><p class="muted">No one's set up yet.</p>`; return; }
+  const leader = current.winner;
+  const past = months.filter(m => m.finished).reverse();
+  $app.innerHTML = `
+    <h1>${monthLabel(current.key)}</h1>
+    <div class="card"><div class="row"><div><p class="muted">Pot so far</p><p class="big-num">${money(current.pot)}</p></div>
+      <div style="text-align:right"><p class="muted">Leading</p><p><b>${leader ? esc(leader.name) : "Tied"}</b></p></div></div>
+      <p class="muted">Fewest misses wins, then most sessions. A tie rolls the pot over.</p></div>
+    ${current.rows.map((r, i) => `
+      <div class="card ${leader && leader.id === r.id ? "lead" : ""}">
+        <div class="row"><b>${i + 1}. ${esc(r.name)}</b>${r.pending ? `<span class="pill wait">due today</span>` : ""}</div>
+        <div class="stats"><div><b>${r.hits}/${r.committed}</b><span>hit</span></div><div><b>${r.misses}</b><span>misses</span></div><div><b>${r.sessions}</b><span>sessions</span></div><div><b>${money(r.totalOwed)}</b><span>owes${r.carried ? "*" : ""}</span></div></div>
+        <div class="strip">${r.days.map(x => `<i class="${x.s}"></i>`).join("")}</div>
+      </div>`).join("")}
+    ${current.rows.some(r => r.carried) ? `<p class="muted">* includes fines carried from a rolled over month</p>` : ""}
+    <p class="muted">🟩 done &nbsp; 🟥 missed &nbsp; 🟨 due today</p>
+    ${past.length ? `<h2>Past months</h2>${past.map(m => `
+      <div class="card"><div class="row"><b>${monthLabel(m.key)}</b><span>${money(m.pot)}</span></div>
+      ${m.rolledOver ? `<p class="muted">Tie, so the pot rolled over.</p>` :
+        `<p>🏆 <b>${esc(m.winner.name)}</b> won</p>${m.payments.length ? m.payments.map(x => `<p class="muted">${esc(x.from)} pays ${esc(x.to)} ${money(x.amount)}</p>`).join("") : `<p class="muted">Nobody owes anything.</p>`}`}
+      </div>`).join("")}` : ""}`;
+}
+
+async function renderFeed() {
+  const names = Object.fromEntries(S.profiles.map(p => [p.id, p.name]));
+  const items = S.checkins.slice(0, 30);
+  $app.innerHTML = `<h1>Feed</h1>${items.length ? "" : `<p class="muted">No check ins yet.</p>`}<div class="feed">${items.map(c => `
+    <div class="card"><div class="row"><b>${esc(names[c.user_id] || "?")}</b>
+      ${c.valid ? `<span class="pill ok">COUNTED</span>` : `<span class="pill bad">DIDN'T COUNT</span>`}</div>
+      <p class="muted">${fmtTime(c.created_at)}${c.distance_m != null ? ` · ${c.distance_m}m from gym` : " · no gym set"}</p>
+      <img data-p="${esc(c.photo_path)}" alt="">
+    </div>`).join("")}</div>`;
+  const need = items.map(c => c.photo_path).filter(p => !S.urls[p]);
+  if (need.length) {
+    const { data } = await sb.storage.from("checkins").createSignedUrls(need, 3600);
+    (data || []).forEach(x => { if (x.signedUrl) S.urls[x.path] = x.signedUrl; });
+  }
+  document.querySelectorAll(".feed img").forEach(img => { const u = S.urls[img.dataset.p]; if (u) img.src = u; });
+}
+
+function renderMe() {
+  const me = S.me, sel = [...me.days];
+  const others = S.profiles.filter(p => p.id !== me.id && p.gym_set_at);
+  $app.innerHTML = `
+    <h1>${esc(me.name)}</h1><p class="muted">${esc(S.user.email)}</p>
+    <div class="card"><b>Fixed days</b><p class="muted">Changing these also changes how this month is scored, so agree it with the group first.</p>
+      ${daysPicker(sel)}<button class="btn ghost" id="sd">Save days</button></div>
+    <div class="card"><b>My gym</b>
+      <p class="muted">${me.gym_lat ? `${esc(me.gym_name || "Saved")} · set ${fmtTime(me.gym_set_at)}` : "Not set"}</p>
+      <p class="muted">Only reset this while you're standing in your gym. Everyone can see when it was last changed.</p>
+      <button class="btn ghost" id="sg">📍 Set gym to where I am now</button></div>
+    ${others.length ? `<div class="card"><b>Gym last changed</b>${others.map(p => `<p class="muted">${esc(p.name)}: ${fmtTime(p.gym_set_at)}</p>`).join("")}</div>` : ""}
+    <button class="btn ghost" id="out">Log out</button>`;
+  wireDays(sel);
+  document.getElementById("sd").onclick = async () => {
+    if (sel.length < MIN_DAYS) return toast(`Pick at least ${MIN_DAYS} days.`);
+    const { error } = await sb.from("profiles").update({ days: sel.sort() }).eq("id", me.id);
+    if (error) return toast(error.message);
+    await refresh(); toast("Days saved."); render();
+  };
+  document.getElementById("sg").onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      const p = await getPosition();
+      if (p.coords.accuracy > 100) throw new Error(`Location is too rough (±${Math.round(p.coords.accuracy)}m). Try again near a window.`);
+      const { error } = await sb.from("profiles").update({ gym_lat: p.coords.latitude, gym_lng: p.coords.longitude }).eq("id", me.id);
+      if (error) throw error;
+      await refresh(); toast("Gym location saved."); render();
+    } catch (err) { toast(err.message); }
+    e.target.disabled = false;
+  };
+  document.getElementById("out").onclick = () => sb.auth.signOut();
+}
+
+/* --- live camera check in --- */
+async function openCamera() {
+  let stream = null, facing = "user", blob = null;
+  const posP = getPosition();               // start GPS straight away
+  posP.catch(() => {});
+  const ov = document.createElement("div"); ov.className = "cam";
+  ov.innerHTML = `<video autoplay playsinline muted></video><img class="hidden" alt="">
+    <div class="bar" id="b1"><button class="btn ghost" id="x">Cancel</button><button class="btn ghost" id="fl">🔄</button><button class="btn shutter" id="sh">Take photo</button></div>
+    <div class="bar hidden" id="b2"><button class="btn ghost" id="re">Retake</button><button class="btn" id="up">Check in</button></div>`;
+  document.body.appendChild(ov);
+  const v = ov.querySelector("video"), im = ov.querySelector("img");
+  const stop = () => stream && stream.getTracks().forEach(t => t.stop());
+  const close = () => { stop(); ov.remove(); };
+  async function start() {
+    stop();
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 } }, audio: false }); v.srcObject = stream; }
+    catch { close(); toast("Camera blocked. Allow camera access in your browser settings."); }
+  }
+  await start();
+  ov.querySelector("#x").onclick = close;
+  ov.querySelector("#fl").onclick = () => { facing = facing === "user" ? "environment" : "user"; start(); };
+  ov.querySelector("#sh").onclick = () => {
+    const w = v.videoWidth, h = v.videoHeight; if (!w) return;
+    const scale = Math.min(1, 1080 / Math.max(w, h));
+    const c = document.createElement("canvas"); c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+    const ctx = c.getContext("2d");
+    if (facing === "user") { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    c.toBlob(b => { blob = b; im.src = URL.createObjectURL(b); im.classList.remove("hidden"); v.classList.add("hidden");
+      ov.querySelector("#b1").classList.add("hidden"); ov.querySelector("#b2").classList.remove("hidden"); }, "image/jpeg", 0.8);
+  };
+  ov.querySelector("#re").onclick = () => { blob = null; im.classList.add("hidden"); v.classList.remove("hidden");
+    ov.querySelector("#b2").classList.add("hidden"); ov.querySelector("#b1").classList.remove("hidden"); };
+  ov.querySelector("#up").onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = "Checking location…";
+    try {
+      const pos = await posP.catch(() => getPosition());
+      e.target.textContent = "Uploading…";
+      const path = `${S.user.id}/${Date.now()}.jpg`;
+      const up = await sb.storage.from("checkins").upload(path, blob, { contentType: "image/jpeg" });
+      if (up.error) throw up.error;
+      const { data, error } = await sb.from("checkins").insert({ lat: pos.coords.latitude, lng: pos.coords.longitude,
+        accuracy_m: Math.round(pos.coords.accuracy), photo_path: path }).select().single();
+      if (error) throw error;
+      close(); await refresh(); S.tab = "today"; render();
+      if (data.valid) toast("✅ Checked in. Nice one!");
+      else if (data.distance_m == null) toast("Saved, but it didn't count: set your gym location in Me first.", 5000);
+      else toast(`Didn't count: you're ${data.distance_m}m from your gym (must be within 200m).`, 5000);
+    } catch (err) { e.target.disabled = false; e.target.textContent = "Check in"; toast(err.message || "Something went wrong. Try again."); }
+  };
+}
+
+document.addEventListener("visibilitychange", async () => { if (!document.hidden && S.me) { await refresh(); render(); } });
+boot();
+</script>
+</body>
+</html>
