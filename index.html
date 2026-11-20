@@ -73,6 +73,8 @@ const SUPABASE_URL = "https://uvtvdkrxyctbzqzndbaw.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NteYl5iwu05kpbvx4vPg9Q_S3rb5Wh4";
 const FINE = 5;            // £ per missed day
 const MIN_DAYS = 3;        // minimum committed days per week
+const SEASON_START = "2026-12-01";   // first day that counts
+const SEASON_END = "2027-05-31";     // last day that counts
 const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const DAY_ORDER = [1,2,3,4,5,6,0];
 
@@ -92,8 +94,8 @@ const monthLabel = (k) => new Date(k + "-15T12:00:00Z").toLocaleDateString("en-G
 function scoreMonth(profiles, checkins, key, today, plans) {
   const valid = new Set(checkins.filter(c => c.valid).map(c => c.user_id + "|" + c.local_date));
   const rows = profiles.map(p => {
-    const from = p.start_date > monthStart(key) ? p.start_date : monthStart(key);
-    const to = monthEnd(key) < today ? monthEnd(key) : today;
+    const from = [p.start_date, monthStart(key), SEASON_START].sort().pop();
+    const to = [monthEnd(key), today, SEASON_END].sort()[0];
     const days = []; let hits = 0, misses = 0, pending = 0;
     for (let d = monthStart(key); d <= monthEnd(key); d = addDays(d, 1)) {
       let s = "x";
@@ -105,7 +107,7 @@ function scoreMonth(profiles, checkins, key, today, plans) {
       days.push({ d, s });
     }
     let sessions = 0;
-    for (const v of valid) { const [u, d] = v.split("|"); if (u === p.id && monthKey(d) === key && d >= p.start_date) sessions++; }
+    for (const v of valid) { const [u, d] = v.split("|"); if (u === p.id && monthKey(d) === key && d >= from && d <= to) sessions++; }
     const committed = hits + misses;
     return { id: p.id, name: p.name, hits, misses, pending, committed, sessions, owed: misses * FINE,
              rate: committed ? hits / committed : 1, days };
@@ -124,8 +126,9 @@ function pickWinner(rows) {
 /* Runs every month from the first start date to the current one, carrying unpaid fines through rollovers. */
 function computeSeason(profiles, checkins, today, plans) {
   if (!profiles.length) return { months: [], current: null };
-  const first = profiles.map(p => p.start_date).sort()[0];
-  const nowKey = monthKey(today);
+  const first = [profiles.map(p => p.start_date).sort()[0], SEASON_START].sort().pop();
+  const realNow = monthKey(today);
+  const nowKey = realNow < monthKey(SEASON_START) ? monthKey(SEASON_START) : (realNow > monthKey(SEASON_END) ? monthKey(SEASON_END) : realNow);
   const carry = {}; profiles.forEach(p => carry[p.id] = 0);
   const months = [];
   for (let k = monthKey(first); k <= nowKey; k = nextMonth(k)) {
@@ -134,7 +137,7 @@ function computeSeason(profiles, checkins, today, plans) {
       .sort((a, b) => a.misses - b.misses || b.sessions - a.sessions || a.name.localeCompare(b.name));
     rows.forEach(r => { r.carried = carry[r.id] || 0; r.totalOwed = r.carried + r.owed; });
     const pot = rows.reduce((s, r) => s + r.totalOwed, 0);
-    const finished = k < nowKey;
+    const finished = k < realNow;
     const winner = pickWinner(rows);
     const m = { key: k, rows, pot, finished, winner, payments: [], rolledOver: false };
     if (finished) {
@@ -161,6 +164,15 @@ const S = { user: null, member: false, profiles: [], checkins: [], plans: {}, me
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const money = (n) => "£" + n.toFixed(n % 1 ? 2 : 0);
 function toast(msg, ms = 3200) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
+const prettyDate = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { weekday:"short", day:"numeric", month:"long", timeZone:"UTC" });
+function seasonBanner(today) {
+  if (today < SEASON_START) {
+    const n = Math.round((new Date(SEASON_START + "T12:00:00Z") - new Date(today + "T12:00:00Z")) / 864e5);
+    return `<div class="card lead"><b>🏁 Season starts ${prettyDate(SEASON_START)}</b><p class="muted">${n} day${n === 1 ? "" : "s"} to go. Runs until ${prettyDate(SEASON_END)}. Practice check ins before then don't count, so use them to test the app.</p></div>`;
+  }
+  if (today > SEASON_END) return `<div class="card lead"><b>🏆 Season finished</b><p class="muted">It ran ${prettyDate(SEASON_START)} to ${prettyDate(SEASON_END)}. See the Board for final results.</p></div>`;
+  return "";
+}
 const fmtTime = (iso) => new Date(iso).toLocaleString("en-GB", { timeZone:"Europe/London", weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" });
 
 function getPosition() {
@@ -341,9 +353,10 @@ function renderToday() {
   $app.innerHTML = `
     <p class="muted">${new Date().toLocaleDateString("en-GB", { weekday:"long", day:"numeric", month:"long", timeZone:"Europe/London" })}</p>
     <h1>Hi ${esc(me.name)}</h1>
+    ${seasonBanner(today)}
     <div class="card">
       ${done ? `<span class="pill ok">CHECKED IN</span><p class="big-num">Done today ✅</p>`
-        : isDay ? `<span class="pill wait">GYM DAY</span><p class="big-num">Get it done 💪</p><p class="muted">Check in by 11:59pm or it's a ${money(FINE)} miss.</p>`
+        : isDay ? `<span class="pill wait">GYM DAY</span><p class="big-num">Get it done 💪</p><p class="muted">${today < SEASON_START || today > SEASON_END ? "Outside the season, so this doesn't count." : `Check in by 11:59pm or it's a ${money(FINE)} miss.`}</p>`
         : `<span class="pill ok">REST DAY</span><p class="big-num">Rest up</p><p class="muted">Extra sessions still count towards your total.</p>`}
       ${!me.gym_lat ? `<p class="muted" style="color:var(--warn)">⚠️ Set your gym location in Me first, or check ins won't count.</p>` : ""}
       ${done ? "" : `<button class="btn big" id="ci">📸 Check in</button>`}
@@ -368,6 +381,7 @@ function renderBoard() {
   const past = months.filter(m => m.finished).reverse();
   $app.innerHTML = `
     <h1>${monthLabel(current.key)}</h1>
+    ${seasonBanner(today)}
     <div class="card"><div class="row"><div><p class="muted">Pot so far</p><p class="big-num">${money(current.pot)}</p></div>
       <div style="text-align:right"><p class="muted">Leading</p><p><b>${leader ? esc(leader.name) : "Tied"}</b></p></div></div>
       <p class="muted">Fewest misses wins, then most sessions. A tie rolls the pot over.</p></div>
