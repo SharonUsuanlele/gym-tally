@@ -91,8 +91,9 @@ const weekStart = (s) => addDays(s, -((dow(s) + 6) % 7));
 const daysFor = (p, d, plans) => (plans && plans[p.id + "|" + weekStart(d)]) || p.days;
 const monthLabel = (k) => new Date(k + "-15T12:00:00Z").toLocaleDateString("en-GB", { month:"long", year:"numeric", timeZone:"UTC" });
 
+const counts = (c) => c.review === "approved" || (c.valid && c.review !== "rejected");
 function scoreMonth(profiles, checkins, key, today, plans) {
-  const valid = new Set(checkins.filter(c => c.valid).map(c => c.user_id + "|" + c.local_date));
+  const valid = new Set(checkins.filter(counts).map(c => c.user_id + "|" + c.local_date));
   const rows = profiles.map(p => {
     const from = [p.start_date, monthStart(key), SEASON_START].sort().pop();
     const to = [monthEnd(key), today, SEASON_END].sort()[0];
@@ -159,7 +160,7 @@ function computeSeason(profiles, checkins, today, plans) {
 const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
-const S = { user: null, member: false, profiles: [], checkins: [], plans: {}, me: null, tab: "today", urls: {} };
+const S = { user: null, member: false, admin: false, profiles: [], checkins: [], plans: {}, me: null, tab: "today", urls: {} };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const money = (n) => "£" + n.toFixed(n % 1 ? 2 : 0);
@@ -198,6 +199,7 @@ async function load() {
   if (!S.user) { $nav.classList.add("hidden"); return renderAuth(); }
   const { data: isM } = await sb.rpc("is_member");
   S.member = !!isM;
+  if (S.member) { const { data: isA } = await sb.rpc("is_admin"); S.admin = !!isA; }
   if (!S.member) { $nav.classList.add("hidden"); return renderNotMember(); }
   await refresh();
   if (!S.me) { $nav.classList.add("hidden"); return renderSetup(); }
@@ -209,7 +211,7 @@ async function refresh() {
   const [p, w, c] = await Promise.all([
     sb.from("profiles").select("*"),
     sb.from("week_plans").select("user_id,week_start,days"),
-    sb.from("checkins").select("id,user_id,created_at,local_date,distance_m,valid,photo_path,lat,lng").order("created_at", { ascending: false }).limit(2000)
+    sb.from("checkins").select("id,user_id,created_at,local_date,distance_m,valid,photo_path,lat,lng,review,review_note").order("created_at", { ascending: false }).limit(2000)
   ]);
   S.profiles = p.data || [];
   S.checkins = c.data || [];
@@ -302,7 +304,7 @@ function renderToday() {
   const nextWs = addDays(weekStart(today), 7);
   const nextPlan = S.plans[me.id + "|" + nextWs];
   const mine = S.checkins.filter(c => c.user_id === me.id && c.local_date === today);
-  const done = mine.some(c => c.valid);
+  const done = mine.some(counts);
   const season = computeSeason(S.profiles, S.checkins, today, S.plans);
   const myRow = season.current?.rows.find(r => r.id === me.id);
   const fixed = dayList(thisDays);
@@ -316,7 +318,7 @@ function renderToday() {
         : `<span class="pill ok">REST DAY</span><p class="big-num">Rest up</p><p class="muted">Extra sessions still count towards your total.</p>`}
       ${!me.gym_lat ? `<p class="muted" style="color:var(--warn)">⚠️ Pin your gym first (do it while you're there), or check ins won't count.</p><button class="btn ghost" id="pin">📍 Pin my gym</button>` : ""}
       ${done ? "" : `<button class="btn big" id="ci">📸 Check in</button>`}
-      ${mine.filter(c => !c.valid).length ? `<p class="muted">You have ${mine.filter(c => !c.valid).length} check in(s) today that didn't count (too far from your gym).</p>` : ""}
+      ${mine.filter(c => !counts(c)).length ? `<p class="muted">You have ${mine.filter(c => !counts(c)).length} check in(s) today that didn't count. See the Feed for why.</p>` : ""}
     </div>
     ${myRow ? `<div class="card"><div class="row"><b>${monthLabel(season.current.key)}</b><span class="muted">${fixed}</span></div>
       <div class="stats"><div><b>${myRow.hits}/${myRow.committed + myRow.pending}</b><span>done</span></div><div><b>${myRow.misses}</b><span>misses</span></div><div><b>${myRow.sessions}</b><span>sessions</span></div><div><b>${money(myRow.totalOwed)}</b><span>owed</span></div></div>
@@ -375,10 +377,27 @@ async function renderFeed() {
   const items = S.checkins.slice(0, 30);
   $app.innerHTML = `<h1>Feed</h1>${items.length ? "" : `<p class="muted">No check ins yet.</p>`}<div class="feed">${items.map(c => `
     <div class="card"><div class="row"><b>${esc(names[c.user_id] || "?")}</b>
-      ${c.valid ? `<span class="pill ok">COUNTED</span>` : `<span class="pill bad">DIDN'T COUNT</span>`}</div>
+      ${c.review === "rejected" ? `<span class="pill bad">REJECTED BY ADMIN</span>` : c.review === "approved" ? `<span class="pill ok">APPROVED BY ADMIN</span>`
+        : c.valid ? `<span class="pill ok">COUNTED</span>` : `<span class="pill bad">DIDN'T COUNT</span>`}</div>
+      ${c.review_note ? `<p class="muted">Admin note: ${esc(c.review_note)}</p>` : ""}
       <p class="muted">${fmtTime(c.created_at)} · ${c.distance_m != null ? `${c.distance_m}m from their gym` : "no gym pinned yet"} · <a href="https://www.google.com/maps/search/?api=1&query=${c.lat},${c.lng}" target="_blank" rel="noopener" style="color:var(--accent)">📍 map</a></p>
       <img data-p="${esc(c.photo_path)}" alt="">
+      ${S.admin ? `<div class="row" style="margin-top:10px">
+        ${c.review !== "rejected" && counts(c) ? `<button class="btn ghost rv" data-id="${c.id}" data-r="rejected" style="margin:0;padding:10px">❌ Reject (missed day)</button>` : ""}
+        ${!counts(c) && c.review !== "approved" && c.review !== "rejected" ? `<button class="btn ghost rv" data-id="${c.id}" data-r="approved" style="margin:0;padding:10px">✅ Approve anyway</button>` : ""}
+        ${c.review ? `<button class="btn ghost rv" data-id="${c.id}" data-r="" style="margin:0;padding:10px">↩️ Undo admin decision</button>` : ""}
+      </div>` : ""}
     </div>`).join("")}</div>`;
+  document.querySelectorAll(".rv").forEach(b => b.onclick = async () => {
+    const r = b.dataset.r || null;
+    let note = null;
+    if (r === "rejected") { note = prompt("Reason (optional, everyone sees it):", "Photo or location doesn't match"); if (note === null) return; }
+    if (r === "approved") { note = prompt("Reason (optional, everyone sees it):", "GPS glitch, photo shows the gym"); if (note === null) return; }
+    b.disabled = true;
+    const { error } = await sb.rpc("review_checkin", { p_id: +b.dataset.id, p_review: r, p_note: note });
+    if (error) { b.disabled = false; return toast(error.message); }
+    await refresh(); toast(r === "rejected" ? "Rejected. It now counts as a missed day." : r === "approved" ? "Approved. It now counts." : "Undone."); render();
+  });
   loadPhotos();
 }
 
